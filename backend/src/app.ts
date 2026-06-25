@@ -5,6 +5,7 @@ import { CardService } from './services/card-service.js'
 import type { Card, CardPayload } from './types.js'
 
 interface CardMutationService {
+  list(): Card[]
   create(payload: CardPayload): Promise<Card>
   update(id: number, payload: CardPayload): Promise<Card | null>
 }
@@ -64,7 +65,7 @@ export function createApp(repository: CardRepository, cardMutationService?: Card
 
   app.get('/health', async () => ({ status: 'ok' }))
 
-  app.get('/api/cards', async () => repository.list())
+  app.get('/api/cards', async () => cards.list())
 
   app.post('/api/cards', async (request, reply) => {
     const payload = normalizePayload(request.body)

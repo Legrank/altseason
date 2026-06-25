@@ -34,6 +34,7 @@ test('creates a card with computed average daily volume', async (t) => {
   assert.equal(requestedSymbol, 'BTC_USDT')
   assert.equal(requestedLimit, 90)
   assert.equal(created.mexcAvgDailyVolume3m, 110)
+  assert.deepEqual(repository.getById(created.id)?.mexcDailyAmounts3m, [100, 110, 120])
 })
 
 test('keeps average daily volume when symbol does not change', async (t) => {
@@ -51,7 +52,7 @@ test('keeps average daily volume when symbol does not change', async (t) => {
       sellPrice: null
     },
     {
-      mexcAvgDailyVolume3m: 321
+      mexcDailyAmounts3m: [321, 321, 321]
     }
   )
 
@@ -74,6 +75,7 @@ test('keeps average daily volume when symbol does not change', async (t) => {
   })
 
   assert.equal(updated?.mexcAvgDailyVolume3m, 321)
+  assert.deepEqual(repository.getById(existing.id)?.mexcDailyAmounts3m, [321, 321, 321])
   assert.equal(calls, 0)
 })
 
@@ -92,7 +94,7 @@ test('recomputes average daily volume when symbol changes', async (t) => {
       sellPrice: null
     },
     {
-      mexcAvgDailyVolume3m: 321
+      mexcDailyAmounts3m: [321, 321, 321]
     }
   )
 
@@ -114,4 +116,5 @@ test('recomputes average daily volume when symbol changes', async (t) => {
   })
 
   assert.equal(updated?.mexcAvgDailyVolume3m, 220)
+  assert.deepEqual(repository.getById(existing.id)?.mexcDailyAmounts3m, [200, 220, 240])
 })

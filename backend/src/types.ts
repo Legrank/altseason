@@ -13,6 +13,19 @@ export interface Card {
   mexcSyncStatus: MexcSyncStatus
 }
 
+export interface StoredCard {
+  id: number
+  symbol: string
+  buyPriceSafe: number
+  buyPriceRisk: number | null
+  sellPrice: number | null
+  createdAt: string
+  mexcPrice: number | null
+  mexcDailyAmounts3m: number[] | null
+  mexcPriceUpdatedAt: string | null
+  mexcSyncStatus: MexcSyncStatus
+}
+
 export interface CardPayload {
   symbol: string
   buyPriceSafe: number

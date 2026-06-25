@@ -1,5 +1,5 @@
 import { CardRepository } from '../repository.js'
-import type { Card, CardPayload } from '../types.js'
+import type { Card, CardPayload, StoredCard } from '../types.js'
 import { calculateRobustAverage } from './robust-average.js'
 
 interface DailyVolumeProvider {
@@ -23,13 +23,14 @@ export class CardService {
   }
 
   list(): Card[] {
-    return this.repository.list()
+    return this.repository.list().map((card) => this.toCard(card))
   }
 
   async create(payload: CardPayload): Promise<Card> {
-    const mexcAvgDailyVolume3m = await this.calculateAvgDailyVolume(payload.symbol)
+    const mexcDailyAmounts3m = await this.fetchDailyAmounts(payload.symbol)
+    const card = this.repository.create(payload, { mexcDailyAmounts3m })
 
-    return this.repository.create(payload, { mexcAvgDailyVolume3m })
+    return this.toCard(card)
   }
 
   async update(id: number, payload: CardPayload): Promise<Card | null> {
@@ -39,28 +40,43 @@ export class CardService {
       return null
     }
 
-    const mexcAvgDailyVolume3m =
+    const mexcDailyAmounts3m =
       existing.symbol === payload.symbol
-        ? existing.mexcAvgDailyVolume3m
-        : await this.calculateAvgDailyVolume(payload.symbol)
+        ? existing.mexcDailyAmounts3m
+        : await this.fetchDailyAmounts(payload.symbol)
 
-    return this.repository.update(id, payload, { mexcAvgDailyVolume3m })
+    const updated = this.repository.update(id, payload, { mexcDailyAmounts3m })
+
+    return updated ? this.toCard(updated) : null
   }
 
-  private async calculateAvgDailyVolume(symbol: string): Promise<number | null> {
+  private async fetchDailyAmounts(symbol: string): Promise<number[] | null> {
     if (!this.dailyVolumeProvider) {
       return null
     }
 
     try {
-      const amounts = await this.dailyVolumeProvider.getUsdtFuturesDailyAmounts(
+      return await this.dailyVolumeProvider.getUsdtFuturesDailyAmounts(
         `${symbol}_USDT`,
         DAILY_VOLUME_LOOKBACK_DAYS
       )
-
-      return calculateRobustAverage(amounts)
     } catch {
       return null
+    }
+  }
+
+  private toCard(card: StoredCard): Card {
+    return {
+      id: card.id,
+      symbol: card.symbol,
+      buyPriceSafe: card.buyPriceSafe,
+      buyPriceRisk: card.buyPriceRisk,
+      sellPrice: card.sellPrice,
+      createdAt: card.createdAt,
+      mexcPrice: card.mexcPrice,
+      mexcAvgDailyVolume3m: calculateRobustAverage(card.mexcDailyAmounts3m ?? []),
+      mexcPriceUpdatedAt: card.mexcPriceUpdatedAt,
+      mexcSyncStatus: card.mexcSyncStatus
     }
   }
 }
