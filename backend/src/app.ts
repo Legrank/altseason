@@ -1,7 +1,13 @@
 import Fastify from 'fastify'
 
 import { CardRepository } from './repository.js'
-import type { CardPayload } from './types.js'
+import { CardService } from './services/card-service.js'
+import type { Card, CardPayload } from './types.js'
+
+interface CardMutationService {
+  create(payload: CardPayload): Promise<Card>
+  update(id: number, payload: CardPayload): Promise<Card | null>
+}
 
 function normalizeOptionalPrice(value: unknown): number | null | undefined {
   if (value === undefined || value === null) {
@@ -52,8 +58,9 @@ function normalizePayload(payload: unknown): CardPayload | null {
   }
 }
 
-export function createApp(repository: CardRepository) {
+export function createApp(repository: CardRepository, cardMutationService?: CardMutationService) {
   const app = Fastify({ logger: false })
+  const cards = cardMutationService ?? new CardService({ repository })
 
   app.get('/health', async () => ({ status: 'ok' }))
 
@@ -69,7 +76,7 @@ export function createApp(repository: CardRepository) {
       })
     }
 
-    return reply.code(201).send(repository.create(payload))
+    return reply.code(201).send(await cards.create(payload))
   })
 
   app.put('/api/cards/:id', async (request, reply) => {
@@ -87,7 +94,7 @@ export function createApp(repository: CardRepository) {
       })
     }
 
-    const updated = repository.update(id, payload)
+    const updated = await cards.update(id, payload)
 
     if (!updated) {
       return reply.code(404).send({ message: 'Card not found.' })

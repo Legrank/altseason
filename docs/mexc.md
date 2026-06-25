@@ -15,8 +15,10 @@ This is an architectural rule for the project.
 Current price sync uses one public MEXC futures endpoint:
 
 - `GET /api/v1/contract/ticker`
+- `GET /api/v1/contract/kline/{symbol}?interval=Day1`
 
 The backend fetches the full futures market snapshot, then filters local symbols in memory.
+For average daily volume, the backend fetches daily kline data for the exact tracked contract and reads the `amount` series.
 
 Saved symbol mapping:
 
@@ -25,6 +27,7 @@ Saved symbol mapping:
 
 Only exact `*_USDT` perpetual contracts are supported in v1.
 The synced value stored in cards is the futures ticker field `lastPrice`.
+The stored average daily volume is computed from the last 90 daily `amount` values after excluding anomalously high outliers with an upper `IQR` filter.
 
 ## Rate-limit policy
 

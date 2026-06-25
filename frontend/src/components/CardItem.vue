@@ -21,12 +21,20 @@ const priceFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 6
 })
 
+const volumeFormatter = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2
+})
+
 function formatPrice(price: number) {
   return priceFormatter.format(price)
 }
 
 function formatOptionalPrice(price: number | null) {
   return price === null ? 'Not set' : formatPrice(price)
+}
+
+function formatVolume(volume: number | null) {
+  return volume === null ? 'Unavailable' : volumeFormatter.format(volume)
 }
 
 function formatDate(value: string) {
@@ -91,6 +99,11 @@ function getMexcStatusClass(status: MexcSyncStatus) {
           <p class="price price-secondary">
             {{ props.card.mexcPrice === null ? 'Unavailable' : formatPrice(props.card.mexcPrice) }}
           </p>
+        </div>
+
+        <div>
+          <p class="label">Avg daily volume (3M)</p>
+          <p class="price price-secondary">{{ formatVolume(props.card.mexcAvgDailyVolume3m) }}</p>
         </div>
       </div>
 

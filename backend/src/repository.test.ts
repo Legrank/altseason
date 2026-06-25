@@ -32,6 +32,7 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   assert.equal(cards[0].buyPriceRisk, null)
   assert.equal(cards[0].sellPrice, null)
   assert.equal(cards[0].mexcPrice, null)
+  assert.equal(cards[0].mexcAvgDailyVolume3m, null)
   assert.equal(cards[0].mexcPriceUpdatedAt, null)
   assert.equal(cards[0].mexcSyncStatus, 'pending')
 
@@ -43,6 +44,7 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   })
 
   assert.equal(createResult.buyPriceSafe, 200)
+  assert.equal(createResult.mexcAvgDailyVolume3m, null)
 
   repository.close()
   unlinkSync(databasePath)

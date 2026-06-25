@@ -4,13 +4,18 @@ import { dirname, resolve } from 'node:path'
 import { createApp } from './app.js'
 import { MexcClient } from './integrations/mexc/index.js'
 import { CardRepository } from './repository.js'
+import { CardService } from './services/card-service.js'
 import { MexcSyncService } from './services/mexc-sync-service.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const databasePath = resolve(currentDir, '../data/cards.sqlite')
 const repository = new CardRepository(databasePath)
-const app = createApp(repository)
 const mexcClient = new MexcClient()
+const cardService = new CardService({
+  repository,
+  dailyVolumeProvider: mexcClient
+})
+const app = createApp(repository, cardService)
 const mexcSyncService = new MexcSyncService({
   repository,
   mexcClient

@@ -12,6 +12,7 @@ interface CardRow {
   sell_price: number | null
   created_at: string
   mexc_price: number | null
+  mexc_avg_daily_volume_3m: number | null
   mexc_price_updated_at: string | null
   mexc_sync_status: MexcSyncStatus
 }
@@ -30,7 +31,7 @@ export class CardRepository {
 
   list(): Card[] {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_avg_daily_volume_3m, mexc_price_updated_at, mexc_sync_status
       FROM cards
       ORDER BY datetime(created_at) DESC, id DESC
     `)
@@ -38,18 +39,20 @@ export class CardRepository {
     return (statement.all() as unknown as CardRow[]).map((row) => this.mapCardRow(row))
   }
 
-  create(payload: CardPayload): Card {
+  create(payload: CardPayload, options?: { mexcAvgDailyVolume3m?: number | null }): Card {
     const createdAt = new Date().toISOString()
+    const mexcAvgDailyVolume3m = options?.mexcAvgDailyVolume3m ?? null
     const statement = this.db.prepare(`
-      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_avg_daily_volume_3m)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
     const result = statement.run(
       payload.symbol,
       payload.buyPriceSafe,
       payload.buyPriceRisk,
       payload.sellPrice,
-      createdAt
+      createdAt,
+      mexcAvgDailyVolume3m
     )
     const id = Number(result.lastInsertRowid)
 
@@ -61,23 +64,26 @@ export class CardRepository {
       sellPrice: payload.sellPrice,
       createdAt,
       mexcPrice: null,
+      mexcAvgDailyVolume3m,
       mexcPriceUpdatedAt: null,
       mexcSyncStatus: 'pending'
     }
   }
 
-  update(id: number, payload: CardPayload): Card | null {
-    const existing = this.findById(id)
+  update(id: number, payload: CardPayload, options?: { mexcAvgDailyVolume3m?: number | null }): Card | null {
+    const existing = this.getById(id)
 
     if (!existing) {
       return null
     }
 
     const symbolChanged = existing.symbol !== payload.symbol
+    const nextMexcAvgDailyVolume3m =
+      options?.mexcAvgDailyVolume3m === undefined ? existing.mexcAvgDailyVolume3m : options.mexcAvgDailyVolume3m
 
     const statement = this.db.prepare(`
       UPDATE cards
-      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, mexc_price = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
+      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, mexc_price = ?, mexc_avg_daily_volume_3m = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
       WHERE id = ?
     `)
 
@@ -87,6 +93,7 @@ export class CardRepository {
       payload.buyPriceRisk,
       payload.sellPrice,
       symbolChanged ? null : existing.mexcPrice,
+      nextMexcAvgDailyVolume3m,
       symbolChanged ? null : existing.mexcPriceUpdatedAt,
       symbolChanged ? 'pending' : existing.mexcSyncStatus,
       id
@@ -99,6 +106,7 @@ export class CardRepository {
       buyPriceRisk: payload.buyPriceRisk,
       sellPrice: payload.sellPrice,
       mexcPrice: symbolChanged ? null : existing.mexcPrice,
+      mexcAvgDailyVolume3m: nextMexcAvgDailyVolume3m,
       mexcPriceUpdatedAt: symbolChanged ? null : existing.mexcPriceUpdatedAt,
       mexcSyncStatus: symbolChanged ? 'pending' : existing.mexcSyncStatus
     }
@@ -159,9 +167,9 @@ export class CardRepository {
     statement.run()
   }
 
-  private findById(id: number): Card | null {
+  getById(id: number): Card | null {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_avg_daily_volume_3m, mexc_price_updated_at, mexc_sync_status
       FROM cards
       WHERE id = ?
     `)
@@ -180,6 +188,7 @@ export class CardRepository {
         sell_price REAL NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
+        mexc_avg_daily_volume_3m REAL NULL,
         mexc_price_updated_at TEXT NULL,
         mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
       )
@@ -197,6 +206,10 @@ export class CardRepository {
 
     if (!columns.has('mexc_price')) {
       this.db.exec('ALTER TABLE cards ADD COLUMN mexc_price REAL NULL')
+    }
+
+    if (!columns.has('mexc_avg_daily_volume_3m')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN mexc_avg_daily_volume_3m REAL NULL')
     }
 
     if (!columns.has('mexc_price_updated_at')) {
@@ -233,6 +246,7 @@ export class CardRepository {
     const buyPriceRiskSelect = columns.has('buy_price_risk') ? 'buy_price_risk' : 'NULL'
     const sellPriceSelect = columns.has('sell_price') ? 'sell_price' : 'NULL'
     const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
+    const mexcAvgDailyVolume3mSelect = columns.has('mexc_avg_daily_volume_3m') ? 'mexc_avg_daily_volume_3m' : 'NULL'
     const mexcPriceUpdatedAtSelect = columns.has('mexc_price_updated_at') ? 'mexc_price_updated_at' : 'NULL'
     const mexcSyncStatusSelect = columns.has('mexc_sync_status')
       ? "COALESCE(NULLIF(mexc_sync_status, ''), 'pending')"
@@ -251,6 +265,7 @@ export class CardRepository {
         sell_price REAL NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
+        mexc_avg_daily_volume_3m REAL NULL,
         mexc_price_updated_at TEXT NULL,
         mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
       );
@@ -263,6 +278,7 @@ export class CardRepository {
         sell_price,
         created_at,
         mexc_price,
+        mexc_avg_daily_volume_3m,
         mexc_price_updated_at,
         mexc_sync_status
       )
@@ -274,6 +290,7 @@ export class CardRepository {
         ${sellPriceSelect},
         created_at,
         ${mexcPriceSelect},
+        ${mexcAvgDailyVolume3mSelect},
         ${mexcPriceUpdatedAtSelect},
         ${mexcSyncStatusSelect}
       FROM cards_legacy;
@@ -293,6 +310,7 @@ export class CardRepository {
       sellPrice: row.sell_price,
       createdAt: row.created_at,
       mexcPrice: row.mexc_price,
+      mexcAvgDailyVolume3m: row.mexc_avg_daily_volume_3m,
       mexcPriceUpdatedAt: row.mexc_price_updated_at,
       mexcSyncStatus: row.mexc_sync_status
     }

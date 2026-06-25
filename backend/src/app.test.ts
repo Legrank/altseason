@@ -3,19 +3,33 @@ import assert from 'node:assert/strict'
 
 import { createApp } from './app.js'
 import { CardRepository } from './repository.js'
+import { CardService } from './services/card-service.js'
 
-function createTestContext() {
+function createTestContext(
+  dailyVolumeProvider?: {
+    getUsdtFuturesDailyAmounts(symbol: string, limit?: number): Promise<number[]>
+  }
+) {
   const repository = new CardRepository(':memory:')
-  const app = createApp(repository)
+  const cardService = new CardService({
+    repository,
+    dailyVolumeProvider
+  })
+  const app = createApp(repository, cardService)
 
   return {
     app,
-    repository
+    repository,
+    cardService
   }
 }
 
-test('creates a card and returns it in the list', async (t) => {
-  const { app, repository } = createTestContext()
+test('creates a card with computed average daily volume and returns it in the list', async (t) => {
+  const { app, repository } = createTestContext({
+    async getUsdtFuturesDailyAmounts() {
+      return [100, 110, 120]
+    }
+  })
 
   t.after(async () => {
     await app.close()
@@ -40,6 +54,7 @@ test('creates a card and returns it in the list', async (t) => {
   assert.equal(createdCard.sellPrice, null)
   assert.match(createdCard.createdAt, /^\d{4}-\d{2}-\d{2}T/)
   assert.equal(createdCard.mexcPrice, null)
+  assert.equal(createdCard.mexcAvgDailyVolume3m, 110)
   assert.equal(createdCard.mexcPriceUpdatedAt, null)
   assert.equal(createdCard.mexcSyncStatus, 'pending')
 
@@ -205,6 +220,7 @@ test('keeps MEXC fields when only manual price changes', async (t) => {
   assert.equal(updated.json().buyPriceRisk, null)
   assert.equal(updated.json().sellPrice, 280)
   assert.equal(updated.json().mexcPrice, 62000.5)
+  assert.equal(updated.json().mexcAvgDailyVolume3m, null)
   assert.equal(updated.json().mexcPriceUpdatedAt, '2026-06-23T10:00:00.000Z')
   assert.equal(updated.json().mexcSyncStatus, 'synced')
 })
@@ -232,4 +248,29 @@ test('creates a card with optional risk and sell prices', async (t) => {
   assert.equal(response.json().buyPriceSafe, 0.55)
   assert.equal(response.json().buyPriceRisk, 0.48)
   assert.equal(response.json().sellPrice, 0.91)
+})
+
+test('creates a card even when average daily volume lookup fails', async (t) => {
+  const { app, repository } = createTestContext({
+    async getUsdtFuturesDailyAmounts() {
+      throw new Error('network down')
+    }
+  })
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/cards',
+    payload: {
+      symbol: 'bnb',
+      buyPriceSafe: 650
+    }
+  })
+
+  assert.equal(response.statusCode, 201)
+  assert.equal(response.json().mexcAvgDailyVolume3m, null)
 })
