@@ -2,7 +2,7 @@ import { MexcClientError } from '../integrations/mexc/index.js'
 import { CardRepository } from '../repository.js'
 
 interface FuturesPriceProvider {
-  getAllUsdtFuturesPrices(): Promise<Map<string, number>>
+  getAllUsdtFuturesPrices(): Promise<Map<string, { lastPrice: number; amount24: number | null }>>
 }
 
 interface MexcSyncServiceOptions {
@@ -62,14 +62,19 @@ export class MexcSyncService {
 
     try {
       const snapshot = await this.mexcClient.getAllUsdtFuturesPrices()
-      const updatedAt = this.now().toISOString()
+      const now = this.now()
+      const updatedAt = now.toISOString()
+      const utcDate = updatedAt.slice(0, 10)
 
       for (const symbol of trackedSymbols) {
         const marketSymbol = `${symbol}_USDT`
-        const mexcPrice = snapshot.get(marketSymbol)
+        const marketSnapshot = snapshot.get(marketSymbol)
 
-        if (typeof mexcPrice === 'number') {
-          this.repository.applyMexcPrice(symbol, mexcPrice, updatedAt)
+        if (marketSnapshot) {
+          this.repository.applyMexcPrice(symbol, marketSnapshot.lastPrice, updatedAt, {
+            amount24: marketSnapshot.amount24,
+            utcDate
+          })
         } else {
           this.repository.markMexcNotFound(symbol)
         }

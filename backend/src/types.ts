@@ -22,6 +22,7 @@ export interface StoredCard {
   createdAt: string
   mexcPrice: number | null
   mexcDailyAmounts3m: number[] | null
+  mexcDailyAmountsUtcDate: string | null
   mexcPriceUpdatedAt: string | null
   mexcSyncStatus: MexcSyncStatus
 }

@@ -7,6 +7,12 @@ const DAILY_KLINE_INTERVAL = 'Day1'
 interface MexcFuturesTickerItem {
   symbol: string
   lastPrice: number
+  amount24?: number | string
+}
+
+interface MexcFuturesTickerSnapshot {
+  lastPrice: number
+  amount24: number | null
 }
 
 interface MexcResponseEnvelope {
@@ -55,14 +61,14 @@ export class MexcClient {
     this.now = options.now ?? Date.now
   }
 
-  async getAllUsdtFuturesPrices(): Promise<Map<string, number>> {
+  async getAllUsdtFuturesPrices(): Promise<Map<string, MexcFuturesTickerSnapshot>> {
     const payload = await this.requestJson(FUTURES_TICKER_PATH, 'Failed to parse MEXC futures ticker response.')
 
     if (!this.isValidResponseEnvelope(payload) || !Array.isArray(payload.data)) {
       throw new MexcClientError('parse', 'Unexpected MEXC futures ticker payload shape.')
     }
 
-    const prices = new Map<string, number>()
+    const prices = new Map<string, MexcFuturesTickerSnapshot>()
 
     for (const item of payload.data as MexcFuturesTickerItem[]) {
       if (typeof item?.symbol !== 'string' || typeof item?.lastPrice !== 'number') {
@@ -73,7 +79,10 @@ export class MexcClient {
         continue
       }
 
-      prices.set(item.symbol, item.lastPrice)
+      prices.set(item.symbol, {
+        lastPrice: item.lastPrice,
+        amount24: this.parseFiniteNumber(item.amount24)
+      })
     }
 
     return prices
@@ -95,7 +104,7 @@ export class MexcClient {
       throw new MexcClientError('parse', 'Unexpected MEXC futures kline payload shape.')
     }
 
-    return amounts.slice(-limit)
+    return amounts.slice(-limit).reverse()
   }
 
   private assertCooldown(): void {

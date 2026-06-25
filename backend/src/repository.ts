@@ -13,6 +13,7 @@ interface CardRow {
   created_at: string
   mexc_price: number | null
   mexc_daily_amounts_3m: string | null
+  mexc_daily_amounts_utc_date: string | null
   mexc_price_updated_at: string | null
   mexc_sync_status: MexcSyncStatus
 }
@@ -31,7 +32,7 @@ export class CardRepository {
 
   list(): StoredCard[] {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_daily_amounts_3m, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       ORDER BY datetime(created_at) DESC, id DESC
     `)
@@ -39,12 +40,16 @@ export class CardRepository {
     return (statement.all() as unknown as CardRow[]).map((row) => this.mapCardRow(row))
   }
 
-  create(payload: CardPayload, options?: { mexcDailyAmounts3m?: number[] | null }): StoredCard {
+  create(
+    payload: CardPayload,
+    options?: { mexcDailyAmounts3m?: number[] | null; mexcDailyAmountsUtcDate?: string | null }
+  ): StoredCard {
     const createdAt = new Date().toISOString()
     const mexcDailyAmounts3m = options?.mexcDailyAmounts3m ?? null
+    const mexcDailyAmountsUtcDate = options?.mexcDailyAmountsUtcDate ?? null
     const statement = this.db.prepare(`
-      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_daily_amounts_3m)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
     const result = statement.run(
       payload.symbol,
@@ -52,7 +57,8 @@ export class CardRepository {
       payload.buyPriceRisk,
       payload.sellPrice,
       createdAt,
-      this.serializeDailyAmounts(mexcDailyAmounts3m)
+      this.serializeDailyAmounts(mexcDailyAmounts3m),
+      mexcDailyAmountsUtcDate
     )
     const id = Number(result.lastInsertRowid)
 
@@ -65,12 +71,17 @@ export class CardRepository {
       createdAt,
       mexcPrice: null,
       mexcDailyAmounts3m,
+      mexcDailyAmountsUtcDate,
       mexcPriceUpdatedAt: null,
       mexcSyncStatus: 'pending'
     }
   }
 
-  update(id: number, payload: CardPayload, options?: { mexcDailyAmounts3m?: number[] | null }): StoredCard | null {
+  update(
+    id: number,
+    payload: CardPayload,
+    options?: { mexcDailyAmounts3m?: number[] | null; mexcDailyAmountsUtcDate?: string | null }
+  ): StoredCard | null {
     const existing = this.getById(id)
 
     if (!existing) {
@@ -80,10 +91,14 @@ export class CardRepository {
     const symbolChanged = existing.symbol !== payload.symbol
     const nextMexcDailyAmounts3m =
       options?.mexcDailyAmounts3m === undefined ? existing.mexcDailyAmounts3m : options.mexcDailyAmounts3m
+    const nextMexcDailyAmountsUtcDate =
+      options?.mexcDailyAmountsUtcDate === undefined
+        ? existing.mexcDailyAmountsUtcDate
+        : options.mexcDailyAmountsUtcDate
 
     const statement = this.db.prepare(`
       UPDATE cards
-      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, mexc_price = ?, mexc_daily_amounts_3m = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
+      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, mexc_price = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
       WHERE id = ?
     `)
 
@@ -94,6 +109,7 @@ export class CardRepository {
       payload.sellPrice,
       symbolChanged ? null : existing.mexcPrice,
       this.serializeDailyAmounts(nextMexcDailyAmounts3m),
+      nextMexcDailyAmountsUtcDate,
       symbolChanged ? null : existing.mexcPriceUpdatedAt,
       symbolChanged ? 'pending' : existing.mexcSyncStatus,
       id
@@ -107,6 +123,7 @@ export class CardRepository {
       sellPrice: payload.sellPrice,
       mexcPrice: symbolChanged ? null : existing.mexcPrice,
       mexcDailyAmounts3m: nextMexcDailyAmounts3m,
+      mexcDailyAmountsUtcDate: nextMexcDailyAmountsUtcDate,
       mexcPriceUpdatedAt: symbolChanged ? null : existing.mexcPriceUpdatedAt,
       mexcSyncStatus: symbolChanged ? 'pending' : existing.mexcSyncStatus
     }
@@ -137,14 +154,41 @@ export class CardRepository {
     return rows.map((row) => row.symbol)
   }
 
-  applyMexcPrice(symbol: string, mexcPrice: number, updatedAt: string): void {
+  applyMexcPrice(
+    symbol: string,
+    mexcPrice: number,
+    updatedAt: string,
+    options?: { amount24?: number | null; utcDate?: string }
+  ): void {
+    const cards = this.list().filter((card) => card.symbol === symbol)
+
+    if (cards.length === 0) {
+      return
+    }
+
     const statement = this.db.prepare(`
       UPDATE cards
-      SET mexc_price = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
-      WHERE symbol = ?
+      SET mexc_price = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
+      WHERE id = ?
     `)
 
-    statement.run(mexcPrice, updatedAt, symbol)
+    for (const card of cards) {
+      const nextDailyAmounts =
+        options?.utcDate && typeof options.amount24 === 'number'
+          ? this.rollDailyAmounts(card.mexcDailyAmounts3m, card.mexcDailyAmountsUtcDate, options.amount24, options.utcDate)
+          : {
+              values: card.mexcDailyAmounts3m,
+              utcDate: card.mexcDailyAmountsUtcDate
+            }
+
+      statement.run(
+        mexcPrice,
+        this.serializeDailyAmounts(nextDailyAmounts.values),
+        nextDailyAmounts.utcDate,
+        updatedAt,
+        card.id
+      )
+    }
   }
 
   markMexcNotFound(symbol: string): void {
@@ -169,7 +213,7 @@ export class CardRepository {
 
   getById(id: number): StoredCard | null {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_daily_amounts_3m, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       WHERE id = ?
     `)
@@ -189,6 +233,7 @@ export class CardRepository {
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_daily_amounts_3m TEXT NULL,
+        mexc_daily_amounts_utc_date TEXT NULL,
         mexc_price_updated_at TEXT NULL,
         mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
       )
@@ -210,6 +255,11 @@ export class CardRepository {
 
     if (!columns.has('mexc_daily_amounts_3m')) {
       this.db.exec('ALTER TABLE cards ADD COLUMN mexc_daily_amounts_3m TEXT NULL')
+    }
+
+    if (!columns.has('mexc_daily_amounts_utc_date')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN mexc_daily_amounts_utc_date TEXT NULL')
+      this.reverseStoredDailyAmountsForNewestFirstOrder()
     }
 
     if (!columns.has('mexc_price_updated_at')) {
@@ -247,6 +297,7 @@ export class CardRepository {
     const sellPriceSelect = columns.has('sell_price') ? 'sell_price' : 'NULL'
     const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
     const mexcDailyAmounts3mSelect = columns.has('mexc_daily_amounts_3m') ? 'mexc_daily_amounts_3m' : 'NULL'
+    const mexcDailyAmountsUtcDateSelect = columns.has('mexc_daily_amounts_utc_date') ? 'mexc_daily_amounts_utc_date' : 'NULL'
     const mexcPriceUpdatedAtSelect = columns.has('mexc_price_updated_at') ? 'mexc_price_updated_at' : 'NULL'
     const mexcSyncStatusSelect = columns.has('mexc_sync_status')
       ? "COALESCE(NULLIF(mexc_sync_status, ''), 'pending')"
@@ -266,6 +317,7 @@ export class CardRepository {
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_daily_amounts_3m TEXT NULL,
+        mexc_daily_amounts_utc_date TEXT NULL,
         mexc_price_updated_at TEXT NULL,
         mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
       );
@@ -279,6 +331,7 @@ export class CardRepository {
         created_at,
         mexc_price,
         mexc_daily_amounts_3m,
+        mexc_daily_amounts_utc_date,
         mexc_price_updated_at,
         mexc_sync_status
       )
@@ -291,6 +344,7 @@ export class CardRepository {
         created_at,
         ${mexcPriceSelect},
         ${mexcDailyAmounts3mSelect},
+        ${mexcDailyAmountsUtcDateSelect},
         ${mexcPriceUpdatedAtSelect},
         ${mexcSyncStatusSelect}
       FROM cards_legacy;
@@ -311,8 +365,58 @@ export class CardRepository {
       createdAt: row.created_at,
       mexcPrice: row.mexc_price,
       mexcDailyAmounts3m: this.parseDailyAmounts(row.mexc_daily_amounts_3m),
+      mexcDailyAmountsUtcDate: row.mexc_daily_amounts_utc_date,
       mexcPriceUpdatedAt: row.mexc_price_updated_at,
       mexcSyncStatus: row.mexc_sync_status
+    }
+  }
+
+  private reverseStoredDailyAmountsForNewestFirstOrder(): void {
+    const rows = this.db.prepare(`
+      SELECT id, mexc_daily_amounts_3m
+      FROM cards
+      WHERE mexc_daily_amounts_3m IS NOT NULL
+    `)
+    const update = this.db.prepare(`
+      UPDATE cards
+      SET mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = NULL
+      WHERE id = ?
+    `)
+
+    for (const row of rows.all() as Array<{ id: number; mexc_daily_amounts_3m: string | null }>) {
+      const values = this.parseDailyAmounts(row.mexc_daily_amounts_3m)
+
+      if (values === null) {
+        continue
+      }
+
+      update.run(this.serializeDailyAmounts([...values].reverse()), row.id)
+    }
+  }
+
+  private rollDailyAmounts(
+    currentValues: number[] | null,
+    currentUtcDate: string | null,
+    amount24: number,
+    utcDate: string
+  ): { values: number[] | null; utcDate: string | null } {
+    if (currentValues === null) {
+      return {
+        values: null,
+        utcDate: currentUtcDate
+      }
+    }
+
+    if (currentUtcDate === utcDate) {
+      return {
+        values: currentValues,
+        utcDate: currentUtcDate
+      }
+    }
+
+    return {
+      values: [amount24, ...currentValues].slice(0, 90),
+      utcDate
     }
   }
 

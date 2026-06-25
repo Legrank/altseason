@@ -20,8 +20,8 @@ test('syncs all tracked symbols from one snapshot', async (t) => {
       async getAllUsdtFuturesPrices() {
         calls += 1
         return new Map([
-          ['BTC_USDT', 62000.1],
-          ['ETH_USDT', 3400.2]
+          ['BTC_USDT', { lastPrice: 62000.1, amount24: 1100 }],
+          ['ETH_USDT', { lastPrice: 3400.2, amount24: 2200 }]
         ])
       }
     },
@@ -51,7 +51,7 @@ test('marks symbols as not found when snapshot lacks their USDT pair', async (t)
     repository,
     mexcClient: {
       async getAllUsdtFuturesPrices() {
-        return new Map([['BTC_USDT', 62000.1]])
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 1100 }]])
       }
     },
     now: () => new Date('2026-06-23T12:00:00.000Z')
@@ -99,4 +99,62 @@ test('does not wipe last successful price when sync fails', async (t) => {
   assert.equal(btc?.mexcSyncStatus, 'synced')
   assert.equal(fresh?.mexcPrice, null)
   assert.equal(fresh?.mexcSyncStatus, 'error')
+})
+
+test('rolls daily amounts once per UTC day using amount24 from ticker', async (t) => {
+  const repository = new CardRepository(':memory:')
+  const created = repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcDailyAmounts3m: [300, 200, 100] }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 999 }]])
+      }
+    },
+    now: () => new Date('2026-06-24T00:05:00.000Z')
+  })
+
+  await service.syncNow()
+
+  const updated = repository.getById(created.id)
+
+  assert.deepEqual(updated?.mexcDailyAmounts3m, [999, 300, 200, 100])
+  assert.equal(updated?.mexcDailyAmountsUtcDate, '2026-06-24')
+})
+
+test('does not roll daily amounts more than once on the same UTC day', async (t) => {
+  const repository = new CardRepository(':memory:')
+  const created = repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcDailyAmounts3m: [300, 200, 100], mexcDailyAmountsUtcDate: '2026-06-24' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 999 }]])
+      }
+    },
+    now: () => new Date('2026-06-24T12:05:00.000Z')
+  })
+
+  await service.syncNow()
+
+  const updated = repository.getById(created.id)
+
+  assert.deepEqual(updated?.mexcDailyAmounts3m, [300, 200, 100])
+  assert.equal(updated?.mexcDailyAmountsUtcDate, '2026-06-24')
 })

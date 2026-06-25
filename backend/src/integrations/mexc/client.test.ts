@@ -11,8 +11,8 @@ test('parses MEXC futures ticker snapshot into a contract symbol map', async () 
           success: true,
           code: 0,
           data: [
-            { symbol: 'BTC_USDT', lastPrice: 60000.12 },
-            { symbol: 'ETH_USDT', lastPrice: 3000.5 }
+            { symbol: 'BTC_USDT', lastPrice: 60000.12, amount24: '12345.6' },
+            { symbol: 'ETH_USDT', lastPrice: 3000.5, amount24: 789.1 }
           ]
         })
       )
@@ -20,11 +20,11 @@ test('parses MEXC futures ticker snapshot into a contract symbol map', async () 
 
   const prices = await client.getAllUsdtFuturesPrices()
 
-  assert.equal(prices.get('BTC_USDT'), 60000.12)
-  assert.equal(prices.get('ETH_USDT'), 3000.5)
+  assert.deepEqual(prices.get('BTC_USDT'), { lastPrice: 60000.12, amount24: 12345.6 })
+  assert.deepEqual(prices.get('ETH_USDT'), { lastPrice: 3000.5, amount24: 789.1 })
 })
 
-test('parses MEXC futures daily kline amounts and ignores invalid values', async () => {
+test('parses MEXC futures daily kline amounts, ignores invalid values, and returns newest first', async () => {
   const client = new MexcClient({
     fetchImpl: async () =>
       new Response(
@@ -40,7 +40,7 @@ test('parses MEXC futures daily kline amounts and ignores invalid values', async
 
   const amounts = await client.getUsdtFuturesDailyAmounts('BTC_USDT')
 
-  assert.deepEqual(amounts, [100, 200])
+  assert.deepEqual(amounts, [200, 100])
 })
 
 test('rejects invalid MEXC futures daily kline payloads with a parse error', async () => {
