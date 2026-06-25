@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict'
+import { unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import test from 'node:test'
+
+import { CardRepository } from './repository.js'
+
+test('migrates an existing cards table to add MEXC columns', () => {
+  const databasePath = join(tmpdir(), `altseason-migration-${Date.now()}.sqlite`)
+  const legacyDatabase = new DatabaseSync(databasePath)
+
+  legacyDatabase.exec(`
+    CREATE TABLE cards (
+      id INTEGER PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      price REAL NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `)
+  legacyDatabase.exec(`
+    INSERT INTO cards (symbol, price, created_at)
+    VALUES ('BTC', 100, '2026-06-23T00:00:00.000Z')
+  `)
+  legacyDatabase.close()
+
+  const repository = new CardRepository(databasePath)
+  const cards = repository.list()
+
+  assert.equal(cards[0].mexcPrice, null)
+  assert.equal(cards[0].mexcPriceUpdatedAt, null)
+  assert.equal(cards[0].mexcSyncStatus, 'pending')
+
+  repository.close()
+  unlinkSync(databasePath)
+})

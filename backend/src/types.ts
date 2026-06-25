@@ -1,0 +1,16 @@
+export type MexcSyncStatus = 'pending' | 'synced' | 'not_found' | 'error'
+
+export interface Card {
+  id: number
+  symbol: string
+  price: number
+  createdAt: string
+  mexcPrice: number | null
+  mexcPriceUpdatedAt: string | null
+  mexcSyncStatus: MexcSyncStatus
+}
+
+export interface CardPayload {
+  symbol: string
+  price: number
+}
