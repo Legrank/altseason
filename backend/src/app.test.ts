@@ -27,7 +27,7 @@ test('creates a card and returns it in the list', async (t) => {
     url: '/api/cards',
     payload: {
       symbol: 'btc',
-      price: 102345.67
+      buyPriceSafe: 102345.67
     }
   })
 
@@ -35,7 +35,9 @@ test('creates a card and returns it in the list', async (t) => {
   const createdCard = createResponse.json()
 
   assert.equal(createdCard.symbol, 'BTC')
-  assert.equal(createdCard.price, 102345.67)
+  assert.equal(createdCard.buyPriceSafe, 102345.67)
+  assert.equal(createdCard.buyPriceRisk, null)
+  assert.equal(createdCard.sellPrice, null)
   assert.match(createdCard.createdAt, /^\d{4}-\d{2}-\d{2}T/)
   assert.equal(createdCard.mexcPrice, null)
   assert.equal(createdCard.mexcPriceUpdatedAt, null)
@@ -63,7 +65,7 @@ test('updates a card without changing createdAt', async (t) => {
     url: '/api/cards',
     payload: {
       symbol: 'eth',
-      price: 2500
+      buyPriceSafe: 2500
     }
   })
 
@@ -73,7 +75,9 @@ test('updates a card without changing createdAt', async (t) => {
     url: `/api/cards/${card.id}`,
     payload: {
       symbol: 'sol',
-      price: 180.5
+      buyPriceSafe: 180.5,
+      buyPriceRisk: 170.25,
+      sellPrice: 260
     }
   })
 
@@ -81,7 +85,9 @@ test('updates a card without changing createdAt', async (t) => {
   assert.deepEqual(updateResponse.json(), {
     ...card,
     symbol: 'SOL',
-    price: 180.5,
+    buyPriceSafe: 180.5,
+    buyPriceRisk: 170.25,
+    sellPrice: 260,
     mexcPrice: null,
     mexcPriceUpdatedAt: null,
     mexcSyncStatus: 'pending'
@@ -101,7 +107,7 @@ test('deletes a card', async (t) => {
     url: '/api/cards',
     payload: {
       symbol: 'xrp',
-      price: 1.23
+      buyPriceSafe: 1.23
     }
   })
 
@@ -135,7 +141,7 @@ test('rejects invalid payloads', async (t) => {
       url: '/api/cards',
       payload: {
         symbol: '',
-        price: 100
+        buyPriceSafe: 100
       }
     }),
     app.inject({
@@ -143,13 +149,23 @@ test('rejects invalid payloads', async (t) => {
       url: '/api/cards',
       payload: {
         symbol: 'ADA',
-        price: Number.NaN
+        buyPriceSafe: Number.NaN
+      }
+    }),
+    app.inject({
+      method: 'POST',
+      url: '/api/cards',
+      payload: {
+        symbol: 'ADA',
+        buyPriceSafe: 10,
+        buyPriceRisk: -1
       }
     })
   ])
 
   assert.equal(invalidResponses[0].statusCode, 400)
   assert.equal(invalidResponses[1].statusCode, 400)
+  assert.equal(invalidResponses[2].statusCode, 400)
 })
 
 test('keeps MEXC fields when only manual price changes', async (t) => {
@@ -165,7 +181,9 @@ test('keeps MEXC fields when only manual price changes', async (t) => {
     url: '/api/cards',
     payload: {
       symbol: 'btc',
-      price: 100
+      buyPriceSafe: 100,
+      buyPriceRisk: 80,
+      sellPrice: 140
     }
   })
 
@@ -176,12 +194,42 @@ test('keeps MEXC fields when only manual price changes', async (t) => {
     url: `/api/cards/${created.json().id}`,
     payload: {
       symbol: 'btc',
-      price: 200
+      buyPriceSafe: 200,
+      buyPriceRisk: null,
+      sellPrice: 280
     }
   })
 
   assert.equal(updated.statusCode, 200)
+  assert.equal(updated.json().buyPriceSafe, 200)
+  assert.equal(updated.json().buyPriceRisk, null)
+  assert.equal(updated.json().sellPrice, 280)
   assert.equal(updated.json().mexcPrice, 62000.5)
   assert.equal(updated.json().mexcPriceUpdatedAt, '2026-06-23T10:00:00.000Z')
   assert.equal(updated.json().mexcSyncStatus, 'synced')
+})
+
+test('creates a card with optional risk and sell prices', async (t) => {
+  const { app, repository } = createTestContext()
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/cards',
+    payload: {
+      symbol: 'ada',
+      buyPriceSafe: 0.55,
+      buyPriceRisk: 0.48,
+      sellPrice: 0.91
+    }
+  })
+
+  assert.equal(response.statusCode, 201)
+  assert.equal(response.json().buyPriceSafe, 0.55)
+  assert.equal(response.json().buyPriceRisk, 0.48)
+  assert.equal(response.json().sellPrice, 0.91)
 })

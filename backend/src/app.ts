@@ -3,26 +3,53 @@ import Fastify from 'fastify'
 import { CardRepository } from './repository.js'
 import type { CardPayload } from './types.js'
 
+function normalizeOptionalPrice(value: unknown): number | null | undefined {
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+
+  return value
+}
+
 function normalizePayload(payload: unknown): CardPayload | null {
   if (typeof payload !== 'object' || payload === null) {
     return null
   }
 
   const rawSymbol = Reflect.get(payload, 'symbol')
-  const rawPrice = Reflect.get(payload, 'price')
+  const rawBuyPriceSafe = Reflect.get(payload, 'buyPriceSafe')
+  const rawBuyPriceRisk = Reflect.get(payload, 'buyPriceRisk')
+  const rawSellPrice = Reflect.get(payload, 'sellPrice')
 
-  if (typeof rawSymbol !== 'string' || typeof rawPrice !== 'number') {
+  if (typeof rawSymbol !== 'string' || typeof rawBuyPriceSafe !== 'number') {
     return null
   }
 
   const symbol = rawSymbol.trim().toUpperCase()
-  const price = rawPrice
+  const buyPriceSafe = rawBuyPriceSafe
+  const buyPriceRisk = normalizeOptionalPrice(rawBuyPriceRisk)
+  const sellPrice = normalizeOptionalPrice(rawSellPrice)
 
-  if (!symbol || !Number.isFinite(price) || price < 0) {
+  if (
+    !symbol ||
+    !Number.isFinite(buyPriceSafe) ||
+    buyPriceSafe < 0 ||
+    buyPriceRisk === undefined ||
+    sellPrice === undefined
+  ) {
     return null
   }
 
-  return { symbol, price }
+  return {
+    symbol,
+    buyPriceSafe,
+    buyPriceRisk,
+    sellPrice
+  }
 }
 
 export function createApp(repository: CardRepository) {
@@ -37,7 +64,8 @@ export function createApp(repository: CardRepository) {
 
     if (!payload) {
       return reply.code(400).send({
-        message: 'Invalid payload. "symbol" must be a non-empty string and "price" must be a non-negative number.'
+        message:
+          'Invalid payload. "symbol" must be a non-empty string, "buyPriceSafe" must be a non-negative number, and optional prices must be non-negative numbers or null.'
       })
     }
 
@@ -54,7 +82,8 @@ export function createApp(repository: CardRepository) {
 
     if (!payload) {
       return reply.code(400).send({
-        message: 'Invalid payload. "symbol" must be a non-empty string and "price" must be a non-negative number.'
+        message:
+          'Invalid payload. "symbol" must be a non-empty string, "buyPriceSafe" must be a non-negative number, and optional prices must be non-negative numbers or null.'
       })
     }
 
@@ -85,4 +114,3 @@ export function createApp(repository: CardRepository) {
 
   return app
 }
-

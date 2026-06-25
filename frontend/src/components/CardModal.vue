@@ -6,17 +6,20 @@ import type { Card } from '../types'
 const props = defineProps<{
   open: boolean
   card: Card | null
+  errorMessage: string
   submitting: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
-  submit: [payload: { symbol: string; price: number }]
+  submit: [payload: { symbol: string; buyPriceSafe: number; buyPriceRisk: number | null; sellPrice: number | null }]
 }>()
 
 const form = reactive({
   symbol: '',
-  price: ''
+  buyPriceSafe: '',
+  buyPriceRisk: '',
+  sellPrice: ''
 })
 
 const title = computed(() => (props.card ? 'Edit card' : 'Create card'))
@@ -30,7 +33,9 @@ watch(
     }
 
     form.symbol = card?.symbol ?? ''
-    form.price = card ? String(card.price) : ''
+    form.buyPriceSafe = card ? String(card.buyPriceSafe) : ''
+    form.buyPriceRisk = card?.buyPriceRisk === null || card?.buyPriceRisk === undefined ? '' : String(card.buyPriceRisk)
+    form.sellPrice = card?.sellPrice === null || card?.sellPrice === undefined ? '' : String(card.sellPrice)
   },
   { immediate: true }
 )
@@ -38,7 +43,9 @@ watch(
 function handleSubmit() {
   emit('submit', {
     symbol: form.symbol.trim().toUpperCase(),
-    price: Number(form.price)
+    buyPriceSafe: Number(form.buyPriceSafe),
+    buyPriceRisk: form.buyPriceRisk === '' ? null : Number(form.buyPriceRisk),
+    sellPrice: form.sellPrice === '' ? null : Number(form.sellPrice)
   })
 }
 </script>
@@ -55,6 +62,8 @@ function handleSubmit() {
       </div>
 
       <form class="modal-form" @submit.prevent="handleSubmit">
+        <p v-if="props.errorMessage" class="modal-error">{{ props.errorMessage }}</p>
+
         <label class="field">
           <span>Coin symbol</span>
           <input
@@ -68,14 +77,36 @@ function handleSubmit() {
         </label>
 
         <label class="field">
-          <span>Manual price (USD)</span>
+          <span>Buy price safe (USD)</span>
           <input
-            v-model="form.price"
+            v-model="form.buyPriceSafe"
             type="number"
             min="0"
             step="0.000001"
             placeholder="65000"
             required
+          />
+        </label>
+
+        <label class="field">
+          <span>Buy price risk (USD)</span>
+          <input
+            v-model="form.buyPriceRisk"
+            type="number"
+            min="0"
+            step="0.000001"
+            placeholder="Optional"
+          />
+        </label>
+
+        <label class="field">
+          <span>Sell price (USD)</span>
+          <input
+            v-model="form.sellPrice"
+            type="number"
+            min="0"
+            step="0.000001"
+            placeholder="Optional"
           />
         </label>
 

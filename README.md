@@ -41,7 +41,9 @@ Single-user MVP for managing crypto cards with manual pricing and live MEXC USDT
 ```json
 {
   "symbol": "BTC",
-  "price": 65000
+  "buyPriceSafe": 65000,
+  "buyPriceRisk": 62000,
+  "sellPrice": 78000
 }
 ```
 
@@ -51,7 +53,9 @@ Single-user MVP for managing crypto cards with manual pricing and live MEXC USDT
 {
   "id": 1,
   "symbol": "BTC",
-  "price": 65000,
+  "buyPriceSafe": 65000,
+  "buyPriceRisk": 62000,
+  "sellPrice": 78000,
   "createdAt": "2026-06-23T10:00:00.000Z",
   "mexcPrice": 61059.5,
   "mexcPriceUpdatedAt": "2026-06-23T10:05:00.000Z",
@@ -70,7 +74,8 @@ Possible `mexcSyncStatus` values:
 
 - The backend runs one immediate MEXC sync on startup.
 - After that it refreshes prices every 5 minutes.
-- Manual card price and MEXC futures price are stored separately.
+- `buyPriceSafe` is required; `buyPriceRisk` and `sellPrice` are optional.
+- Manual card prices and MEXC futures price are stored separately.
 - A saved symbol like `BTC` maps to the exact MEXC USDT futures contract `BTC_USDT`.
 - The synced MEXC value is the futures ticker field `lastPrice`.
 - Public MEXC futures contract endpoints are used in v1.

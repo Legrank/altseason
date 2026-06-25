@@ -7,7 +7,9 @@ import type { Card, CardPayload, MexcSyncStatus } from './types.js'
 interface CardRow {
   id: number
   symbol: string
-  price: number
+  buy_price_safe: number
+  buy_price_risk: number | null
+  sell_price: number | null
   created_at: string
   mexc_price: number | null
   mexc_price_updated_at: string | null
@@ -28,7 +30,7 @@ export class CardRepository {
 
   list(): Card[] {
     const statement = this.db.prepare(`
-      SELECT id, symbol, price, created_at, mexc_price, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_price_updated_at, mexc_sync_status
       FROM cards
       ORDER BY datetime(created_at) DESC, id DESC
     `)
@@ -39,16 +41,24 @@ export class CardRepository {
   create(payload: CardPayload): Card {
     const createdAt = new Date().toISOString()
     const statement = this.db.prepare(`
-      INSERT INTO cards (symbol, price, created_at)
-      VALUES (?, ?, ?)
+      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at)
+      VALUES (?, ?, ?, ?, ?)
     `)
-    const result = statement.run(payload.symbol, payload.price, createdAt)
+    const result = statement.run(
+      payload.symbol,
+      payload.buyPriceSafe,
+      payload.buyPriceRisk,
+      payload.sellPrice,
+      createdAt
+    )
     const id = Number(result.lastInsertRowid)
 
     return {
       id,
       symbol: payload.symbol,
-      price: payload.price,
+      buyPriceSafe: payload.buyPriceSafe,
+      buyPriceRisk: payload.buyPriceRisk,
+      sellPrice: payload.sellPrice,
       createdAt,
       mexcPrice: null,
       mexcPriceUpdatedAt: null,
@@ -67,13 +77,15 @@ export class CardRepository {
 
     const statement = this.db.prepare(`
       UPDATE cards
-      SET symbol = ?, price = ?, mexc_price = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
+      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, mexc_price = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
       WHERE id = ?
     `)
 
     statement.run(
       payload.symbol,
-      payload.price,
+      payload.buyPriceSafe,
+      payload.buyPriceRisk,
+      payload.sellPrice,
       symbolChanged ? null : existing.mexcPrice,
       symbolChanged ? null : existing.mexcPriceUpdatedAt,
       symbolChanged ? 'pending' : existing.mexcSyncStatus,
@@ -83,7 +95,9 @@ export class CardRepository {
     return {
       ...existing,
       symbol: payload.symbol,
-      price: payload.price,
+      buyPriceSafe: payload.buyPriceSafe,
+      buyPriceRisk: payload.buyPriceRisk,
+      sellPrice: payload.sellPrice,
       mexcPrice: symbolChanged ? null : existing.mexcPrice,
       mexcPriceUpdatedAt: symbolChanged ? null : existing.mexcPriceUpdatedAt,
       mexcSyncStatus: symbolChanged ? 'pending' : existing.mexcSyncStatus
@@ -147,7 +161,7 @@ export class CardRepository {
 
   private findById(id: number): Card | null {
     const statement = this.db.prepare(`
-      SELECT id, symbol, price, created_at, mexc_price, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_price_updated_at, mexc_sync_status
       FROM cards
       WHERE id = ?
     `)
@@ -161,7 +175,9 @@ export class CardRepository {
       CREATE TABLE IF NOT EXISTS cards (
         id INTEGER PRIMARY KEY,
         symbol TEXT NOT NULL,
-        price REAL NOT NULL,
+        buy_price_safe REAL NOT NULL,
+        buy_price_risk REAL NULL,
+        sell_price REAL NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_price_updated_at TEXT NULL,
@@ -173,6 +189,11 @@ export class CardRepository {
     const columns = new Set(
       (columnInfo.all() as unknown as Array<{ name: string }>).map((column) => column.name)
     )
+
+    if (columns.has('price')) {
+      this.rebuildLegacyPriceSchema(columns)
+      return
+    }
 
     if (!columns.has('mexc_price')) {
       this.db.exec('ALTER TABLE cards ADD COLUMN mexc_price REAL NULL')
@@ -186,6 +207,18 @@ export class CardRepository {
       this.db.exec("ALTER TABLE cards ADD COLUMN mexc_sync_status TEXT NOT NULL DEFAULT 'pending'")
     }
 
+    if (!columns.has('buy_price_safe')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN buy_price_safe REAL NULL')
+    }
+
+    if (!columns.has('buy_price_risk')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN buy_price_risk REAL NULL')
+    }
+
+    if (!columns.has('sell_price')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN sell_price REAL NULL')
+    }
+
     this.db.exec(`
       UPDATE cards
       SET mexc_sync_status = 'pending'
@@ -193,11 +226,71 @@ export class CardRepository {
     `)
   }
 
+  private rebuildLegacyPriceSchema(columns: Set<string>): void {
+    const buyPriceSafeSelect = columns.has('buy_price_safe')
+      ? 'COALESCE(buy_price_safe, price)'
+      : 'price'
+    const buyPriceRiskSelect = columns.has('buy_price_risk') ? 'buy_price_risk' : 'NULL'
+    const sellPriceSelect = columns.has('sell_price') ? 'sell_price' : 'NULL'
+    const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
+    const mexcPriceUpdatedAtSelect = columns.has('mexc_price_updated_at') ? 'mexc_price_updated_at' : 'NULL'
+    const mexcSyncStatusSelect = columns.has('mexc_sync_status')
+      ? "COALESCE(NULLIF(mexc_sync_status, ''), 'pending')"
+      : "'pending'"
+
+    this.db.exec(`
+      BEGIN TRANSACTION;
+
+      ALTER TABLE cards RENAME TO cards_legacy;
+
+      CREATE TABLE cards (
+        id INTEGER PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        buy_price_safe REAL NOT NULL,
+        buy_price_risk REAL NULL,
+        sell_price REAL NULL,
+        created_at TEXT NOT NULL,
+        mexc_price REAL NULL,
+        mexc_price_updated_at TEXT NULL,
+        mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
+      );
+
+      INSERT INTO cards (
+        id,
+        symbol,
+        buy_price_safe,
+        buy_price_risk,
+        sell_price,
+        created_at,
+        mexc_price,
+        mexc_price_updated_at,
+        mexc_sync_status
+      )
+      SELECT
+        id,
+        symbol,
+        ${buyPriceSafeSelect},
+        ${buyPriceRiskSelect},
+        ${sellPriceSelect},
+        created_at,
+        ${mexcPriceSelect},
+        ${mexcPriceUpdatedAtSelect},
+        ${mexcSyncStatusSelect}
+      FROM cards_legacy;
+
+      DROP TABLE cards_legacy;
+
+      COMMIT;
+    `)
+  }
+
   private mapCardRow(row: CardRow): Card {
     return {
       id: row.id,
       symbol: row.symbol,
-      price: row.price,
+      buyPriceSafe: row.buy_price_safe,
+      buyPriceRisk: row.buy_price_risk,
+      sellPrice: row.sell_price,
       createdAt: row.created_at,
       mexcPrice: row.mexc_price,
       mexcPriceUpdatedAt: row.mexc_price_updated_at,

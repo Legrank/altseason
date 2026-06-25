@@ -7,7 +7,7 @@ import test from 'node:test'
 
 import { CardRepository } from './repository.js'
 
-test('migrates an existing cards table to add MEXC columns', () => {
+test('migrates an existing cards table to add renamed manual price columns', () => {
   const databasePath = join(tmpdir(), `altseason-migration-${Date.now()}.sqlite`)
   const legacyDatabase = new DatabaseSync(databasePath)
 
@@ -28,9 +28,21 @@ test('migrates an existing cards table to add MEXC columns', () => {
   const repository = new CardRepository(databasePath)
   const cards = repository.list()
 
+  assert.equal(cards[0].buyPriceSafe, 100)
+  assert.equal(cards[0].buyPriceRisk, null)
+  assert.equal(cards[0].sellPrice, null)
   assert.equal(cards[0].mexcPrice, null)
   assert.equal(cards[0].mexcPriceUpdatedAt, null)
   assert.equal(cards[0].mexcSyncStatus, 'pending')
+
+  const createResult = repository.create({
+    symbol: 'ETH',
+    buyPriceSafe: 200,
+    buyPriceRisk: null,
+    sellPrice: null
+  })
+
+  assert.equal(createResult.buyPriceSafe, 200)
 
   repository.close()
   unlinkSync(databasePath)

@@ -2,13 +2,15 @@
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 
 import { cardsApi } from './api'
+import CardItem from './components/CardItem.vue'
 import CardModal from './components/CardModal.vue'
-import type { Card, MexcSyncStatus } from './types'
+import type { Card } from './types'
 
 const cards = ref<Card[]>([])
 const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
+const modalErrorMessage = ref('')
 const refreshTimer = ref<number | null>(null)
 
 const modalState = reactive<{
@@ -18,48 +20,6 @@ const modalState = reactive<{
   open: false,
   card: null
 })
-
-const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short'
-})
-
-const priceFormatter = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 6
-})
-
-function formatPrice(price: number) {
-  return priceFormatter.format(price)
-}
-
-function formatDate(value: string) {
-  return dateFormatter.format(new Date(value))
-}
-
-function getMexcStatusLabel(status: MexcSyncStatus) {
-  switch (status) {
-    case 'synced':
-      return 'Futures synced'
-    case 'not_found':
-      return 'Contract not found'
-    case 'error':
-      return 'Sync error'
-    case 'pending':
-    default:
-      return 'Sync pending'
-  }
-}
-
-function getMexcStatusClass(status: MexcSyncStatus) {
-  return {
-    synced: status === 'synced',
-    pending: status === 'pending',
-    missing: status === 'not_found',
-    error: status === 'error'
-  }
-}
 
 async function loadCards(options?: { background?: boolean }) {
   if (!options?.background) {
@@ -78,23 +38,31 @@ async function loadCards(options?: { background?: boolean }) {
 }
 
 function openCreateModal() {
+  modalErrorMessage.value = ''
   modalState.open = true
   modalState.card = null
 }
 
 function openEditModal(card: Card) {
+  modalErrorMessage.value = ''
   modalState.open = true
   modalState.card = card
 }
 
 function closeModal() {
+  modalErrorMessage.value = ''
   modalState.open = false
   modalState.card = null
 }
 
-async function submitCard(payload: { symbol: string; price: number }) {
+async function submitCard(payload: {
+  symbol: string
+  buyPriceSafe: number
+  buyPriceRisk: number | null
+  sellPrice: number | null
+}) {
   submitting.value = true
-  errorMessage.value = ''
+  modalErrorMessage.value = ''
 
   try {
     if (modalState.card) {
@@ -107,7 +75,7 @@ async function submitCard(payload: { symbol: string; price: number }) {
 
     closeModal()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Failed to save the card.'
+    modalErrorMessage.value = error instanceof Error ? error.message : 'Failed to save the card.'
   } finally {
     submitting.value = false
   }
@@ -180,67 +148,20 @@ onUnmounted(() => {
       </section>
 
       <section v-else class="cards-grid">
-        <article v-for="card in cards" :key="card.id" class="card">
-          <div class="card-topline">
-            <span class="chip">FUTURES / USDT</span>
-            <span class="timestamp">{{ formatDate(card.createdAt) }}</span>
-          </div>
-
-          <div class="card-body">
-            <div>
-              <p class="label">Symbol</p>
-              <h2>{{ card.symbol }}</h2>
-            </div>
-
-            <div class="metrics">
-              <div>
-                <p class="label">Manual price</p>
-                <p class="price">{{ formatPrice(card.price) }}</p>
-              </div>
-
-              <div>
-                <p class="label">MEXC futures price</p>
-                <p class="price price-secondary">
-                  {{ card.mexcPrice === null ? 'Unavailable' : formatPrice(card.mexcPrice) }}
-                </p>
-              </div>
-            </div>
-
-            <div class="sync-panel">
-              <span class="sync-badge" :class="getMexcStatusClass(card.mexcSyncStatus)">
-                {{ getMexcStatusLabel(card.mexcSyncStatus) }}
-              </span>
-
-              <p v-if="card.mexcSyncStatus === 'synced' && card.mexcPriceUpdatedAt" class="sync-copy">
-                Last MEXC futures update: {{ formatDate(card.mexcPriceUpdatedAt) }}
-              </p>
-              <p v-else-if="card.mexcSyncStatus === 'not_found'" class="sync-copy">
-                Contract {{ card.symbol }}_USDT is not available on MEXC futures.
-              </p>
-              <p v-else-if="card.mexcSyncStatus === 'error'" class="sync-copy">
-                MEXC futures sync is temporarily unavailable. Last successful data is preserved.
-              </p>
-              <p v-else class="sync-copy">
-                Waiting for the next backend sync cycle.
-              </p>
-            </div>
-          </div>
-
-          <div class="card-actions">
-            <button type="button" class="secondary-button" @click="openEditModal(card)">
-              Edit
-            </button>
-            <button type="button" class="danger-button" @click="deleteCard(card)">
-              Delete
-            </button>
-          </div>
-        </article>
+        <CardItem
+          v-for="card in cards"
+          :key="card.id"
+          :card="card"
+          @edit="openEditModal"
+          @delete="deleteCard"
+        />
       </section>
     </main>
 
     <CardModal
       :open="modalState.open"
       :card="modalState.card"
+      :error-message="modalErrorMessage"
       :submitting="submitting"
       @close="closeModal"
       @submit="submitCard"

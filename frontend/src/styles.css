@@ -315,6 +315,16 @@ button {
   margin-top: 24px;
 }
 
+.modal-error {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(224, 84, 84, 0.3);
+  border-radius: 14px;
+  background: rgba(224, 84, 84, 0.12);
+  color: #ffd0d0;
+  line-height: 1.4;
+}
+
 .field {
   display: grid;
   gap: 10px;

@@ -6,8 +6,8 @@ import { MexcSyncService } from './mexc-sync-service.js'
 
 test('syncs all tracked symbols from one snapshot', async (t) => {
   const repository = new CardRepository(':memory:')
-  repository.create({ symbol: 'BTC', price: 100 })
-  repository.create({ symbol: 'ETH', price: 200 })
+  repository.create({ symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null })
+  repository.create({ symbol: 'ETH', buyPriceSafe: 200, buyPriceRisk: null, sellPrice: null })
 
   t.after(() => {
     repository.close()
@@ -40,8 +40,8 @@ test('syncs all tracked symbols from one snapshot', async (t) => {
 
 test('marks symbols as not found when snapshot lacks their USDT pair', async (t) => {
   const repository = new CardRepository(':memory:')
-  repository.create({ symbol: 'BTC', price: 100 })
-  repository.create({ symbol: 'ABC', price: 200 })
+  repository.create({ symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null })
+  repository.create({ symbol: 'ABC', buyPriceSafe: 200, buyPriceRisk: null, sellPrice: null })
 
   t.after(() => {
     repository.close()
@@ -71,9 +71,9 @@ test('marks symbols as not found when snapshot lacks their USDT pair', async (t)
 
 test('does not wipe last successful price when sync fails', async (t) => {
   const repository = new CardRepository(':memory:')
-  repository.create({ symbol: 'BTC', price: 100 })
+  repository.create({ symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null })
   repository.applyMexcPrice('BTC', 62000.1, '2026-06-23T11:00:00.000Z')
-  repository.create({ symbol: 'NEW', price: 200 })
+  repository.create({ symbol: 'NEW', buyPriceSafe: 200, buyPriceRisk: null, sellPrice: null })
 
   t.after(() => {
     repository.close()
