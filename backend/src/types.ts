@@ -3,7 +3,7 @@ export type MexcSyncStatus = 'pending' | 'synced' | 'not_found' | 'error'
 export interface Card {
   id: number
   symbol: string
-  buyPriceSafe: number
+  buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
   createdAt: string
@@ -16,7 +16,7 @@ export interface Card {
 export interface StoredCard {
   id: number
   symbol: string
-  buyPriceSafe: number
+  buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
   createdAt: string
@@ -29,7 +29,7 @@ export interface StoredCard {
 
 export interface CardPayload {
   symbol: string
-  buyPriceSafe: number
+  buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
 }

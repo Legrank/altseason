@@ -65,20 +65,7 @@ export class MexcSyncService {
       const now = this.now()
       const updatedAt = now.toISOString()
       const utcDate = updatedAt.slice(0, 10)
-
-      for (const symbol of trackedSymbols) {
-        const marketSymbol = `${symbol}_USDT`
-        const marketSnapshot = snapshot.get(marketSymbol)
-
-        if (marketSnapshot) {
-          this.repository.applyMexcPrice(symbol, marketSnapshot.lastPrice, updatedAt, {
-            amount24: marketSnapshot.amount24,
-            utcDate
-          })
-        } else {
-          this.repository.markMexcNotFound(symbol)
-        }
-      }
+      this.repository.applyMexcSnapshot(snapshot, updatedAt, utcDate)
     } catch (error) {
       if (error instanceof MexcClientError) {
         this.repository.markPendingMexcSyncError()

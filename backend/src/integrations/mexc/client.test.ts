@@ -3,6 +3,29 @@ import test from 'node:test'
 
 import { MexcClient, MexcClientError } from './client.js'
 
+test('extracts only USDT futures symbols from contract detail payload', async () => {
+  const client = new MexcClient({
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          code: 0,
+          data: [
+            { symbol: 'BTC_USDT', quoteCoin: 'USDT' },
+            { symbol: 'ETH_USDT', quoteCoin: 'USDT' },
+            { symbol: 'BTC_USD', quoteCoin: 'USD' },
+            { symbol: 'SOL_USDT' },
+            { symbol: '   ', quoteCoin: 'USDT' }
+          ]
+        })
+      )
+  })
+
+  const symbols = await client.getUsdtFuturesContractSymbols()
+
+  assert.deepEqual(symbols, ['BTC_USDT', 'ETH_USDT', 'SOL_USDT'])
+})
+
 test('parses MEXC futures ticker snapshot into a contract symbol map', async () => {
   const client = new MexcClient({
     fetchImpl: async () =>

@@ -57,7 +57,7 @@ function closeModal() {
 
 async function submitCard(payload: {
   symbol: string
-  buyPriceSafe: number
+  buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
 }) {

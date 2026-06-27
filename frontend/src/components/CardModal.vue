@@ -12,7 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  submit: [payload: { symbol: string; buyPriceSafe: number; buyPriceRisk: number | null; sellPrice: number | null }]
+  submit: [payload: { symbol: string; buyPriceSafe: number | null; buyPriceRisk: number | null; sellPrice: number | null }]
 }>()
 
 const form = reactive({
@@ -33,7 +33,7 @@ watch(
     }
 
     form.symbol = card?.symbol ?? ''
-    form.buyPriceSafe = card ? String(card.buyPriceSafe) : ''
+    form.buyPriceSafe = card?.buyPriceSafe === null || card?.buyPriceSafe === undefined ? '' : String(card.buyPriceSafe)
     form.buyPriceRisk = card?.buyPriceRisk === null || card?.buyPriceRisk === undefined ? '' : String(card.buyPriceRisk)
     form.sellPrice = card?.sellPrice === null || card?.sellPrice === undefined ? '' : String(card.sellPrice)
   },
@@ -43,7 +43,7 @@ watch(
 function handleSubmit() {
   emit('submit', {
     symbol: form.symbol.trim().toUpperCase(),
-    buyPriceSafe: Number(form.buyPriceSafe),
+    buyPriceSafe: form.buyPriceSafe === '' ? null : Number(form.buyPriceSafe),
     buyPriceRisk: form.buyPriceRisk === '' ? null : Number(form.buyPriceRisk),
     sellPrice: form.sellPrice === '' ? null : Number(form.sellPrice)
   })
@@ -83,8 +83,7 @@ function handleSubmit() {
             type="number"
             min="0"
             step="0.000001"
-            placeholder="65000"
-            required
+            placeholder="Optional"
           />
         </label>
 

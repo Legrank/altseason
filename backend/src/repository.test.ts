@@ -51,3 +51,46 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   repository.close()
   unlinkSync(databasePath)
 })
+
+test('relaxes buy_price_safe to nullable for an existing cards table', () => {
+  const databasePath = join(tmpdir(), `altseason-nullable-${Date.now()}.sqlite`)
+  const existingDatabase = new DatabaseSync(databasePath)
+
+  existingDatabase.exec(`
+    CREATE TABLE cards (
+      id INTEGER PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      buy_price_safe REAL NOT NULL,
+      buy_price_risk REAL NULL,
+      sell_price REAL NULL,
+      created_at TEXT NOT NULL
+    )
+  `)
+  existingDatabase.exec(`
+    INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at)
+    VALUES ('BTC', 100, NULL, NULL, '2026-06-23T00:00:00.000Z')
+  `)
+  existingDatabase.close()
+
+  const repository = new CardRepository(databasePath)
+  const created = repository.create({
+    symbol: 'ETH',
+    buyPriceSafe: null,
+    buyPriceRisk: null,
+    sellPrice: null
+  })
+
+  const reopenedDatabase = new DatabaseSync(databasePath)
+  const columns = reopenedDatabase.prepare('PRAGMA table_info(cards)').all() as Array<{
+    name: string
+    notnull: number
+  }>
+  const buyPriceSafeColumn = columns.find((column) => column.name === 'buy_price_safe')
+
+  assert.equal(created.buyPriceSafe, null)
+  assert.equal(buyPriceSafeColumn?.notnull, 0)
+
+  reopenedDatabase.close()
+  repository.close()
+  unlinkSync(databasePath)
+})

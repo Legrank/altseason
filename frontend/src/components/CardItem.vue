@@ -81,7 +81,7 @@ function getMexcStatusClass(status: MexcSyncStatus) {
       <div class="metrics">
         <div>
           <p class="label">Buy price safe</p>
-          <p class="price">{{ formatPrice(props.card.buyPriceSafe) }}</p>
+          <p class="price">{{ formatOptionalPrice(props.card.buyPriceSafe) }}</p>
         </div>
 
         <div>

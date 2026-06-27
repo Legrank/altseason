@@ -22,6 +22,18 @@ function normalizeOptionalPrice(value: unknown): number | null | undefined {
   return value
 }
 
+function normalizeSafePrice(value: unknown): number | null | undefined {
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+
+  return value
+}
+
 function normalizePayload(payload: unknown): CardPayload | null {
   if (typeof payload !== 'object' || payload === null) {
     return null
@@ -32,22 +44,16 @@ function normalizePayload(payload: unknown): CardPayload | null {
   const rawBuyPriceRisk = Reflect.get(payload, 'buyPriceRisk')
   const rawSellPrice = Reflect.get(payload, 'sellPrice')
 
-  if (typeof rawSymbol !== 'string' || typeof rawBuyPriceSafe !== 'number') {
+  if (typeof rawSymbol !== 'string') {
     return null
   }
 
   const symbol = rawSymbol.trim().toUpperCase()
-  const buyPriceSafe = rawBuyPriceSafe
+  const buyPriceSafe = normalizeSafePrice(rawBuyPriceSafe)
   const buyPriceRisk = normalizeOptionalPrice(rawBuyPriceRisk)
   const sellPrice = normalizeOptionalPrice(rawSellPrice)
 
-  if (
-    !symbol ||
-    !Number.isFinite(buyPriceSafe) ||
-    buyPriceSafe < 0 ||
-    buyPriceRisk === undefined ||
-    sellPrice === undefined
-  ) {
+  if (!symbol || buyPriceSafe === undefined || buyPriceRisk === undefined || sellPrice === undefined) {
     return null
   }
 
@@ -73,7 +79,7 @@ export function createApp(repository: CardRepository, cardMutationService?: Card
     if (!payload) {
       return reply.code(400).send({
         message:
-          'Invalid payload. "symbol" must be a non-empty string, "buyPriceSafe" must be a non-negative number, and optional prices must be non-negative numbers or null.'
+          'Invalid payload. "symbol" must be a non-empty string, "buyPriceSafe" must be a non-negative number or null, and optional prices must be non-negative numbers or null.'
       })
     }
 
@@ -91,7 +97,7 @@ export function createApp(repository: CardRepository, cardMutationService?: Card
     if (!payload) {
       return reply.code(400).send({
         message:
-          'Invalid payload. "symbol" must be a non-empty string, "buyPriceSafe" must be a non-negative number, and optional prices must be non-negative numbers or null.'
+          'Invalid payload. "symbol" must be a non-empty string, "buyPriceSafe" must be a non-negative number or null, and optional prices must be non-negative numbers or null.'
       })
     }
 

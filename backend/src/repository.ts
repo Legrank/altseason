@@ -7,7 +7,7 @@ import type { CardPayload, MexcSyncStatus, StoredCard } from './types.js'
 interface CardRow {
   id: number
   symbol: string
-  buy_price_safe: number
+  buy_price_safe: number | null
   buy_price_risk: number | null
   sell_price: number | null
   created_at: string
@@ -18,15 +18,31 @@ interface CardRow {
   mexc_sync_status: MexcSyncStatus
 }
 
+interface MexcSyncCardRow {
+  id: number
+  symbol: string
+  mexc_daily_amounts_3m: string | null
+  mexc_daily_amounts_utc_date: string | null
+}
+
+interface ColumnInfoRow {
+  name: string
+  notnull: number
+}
+
 export class CardRepository {
   private readonly db: DatabaseSync
+  private readonly usesFileDatabase: boolean
 
   constructor(databasePath: string) {
+    this.usesFileDatabase = databasePath !== ':memory:'
+
     if (databasePath !== ':memory:') {
       mkdirSync(dirname(databasePath), { recursive: true })
     }
 
     this.db = new DatabaseSync(databasePath)
+    this.configureDatabase()
     this.initializeSchema()
   }
 
@@ -34,7 +50,7 @@ export class CardRepository {
     const statement = this.db.prepare(`
       SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
-      ORDER BY datetime(created_at) DESC, id DESC
+      ORDER BY created_at DESC, id DESC
     `)
 
     return (statement.all() as unknown as CardRow[]).map((row) => this.mapCardRow(row))
@@ -160,35 +176,15 @@ export class CardRepository {
     updatedAt: string,
     options?: { amount24?: number | null; utcDate?: string }
   ): void {
-    const cards = this.list().filter((card) => card.symbol === symbol)
+    const cards = this.getCardsForMexcSync(symbol)
 
     if (cards.length === 0) {
       return
     }
 
-    const statement = this.db.prepare(`
-      UPDATE cards
-      SET mexc_price = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
-      WHERE id = ?
-    `)
-
-    for (const card of cards) {
-      const nextDailyAmounts =
-        options?.utcDate && typeof options.amount24 === 'number'
-          ? this.rollDailyAmounts(card.mexcDailyAmounts3m, card.mexcDailyAmountsUtcDate, options.amount24, options.utcDate)
-          : {
-              values: card.mexcDailyAmounts3m,
-              utcDate: card.mexcDailyAmountsUtcDate
-            }
-
-      statement.run(
-        mexcPrice,
-        this.serializeDailyAmounts(nextDailyAmounts.values),
-        nextDailyAmounts.utcDate,
-        updatedAt,
-        card.id
-      )
-    }
+    this.withTransaction(() => {
+      this.applySyncedMexcRows(cards, mexcPrice, updatedAt, options)
+    })
   }
 
   markMexcNotFound(symbol: string): void {
@@ -211,6 +207,61 @@ export class CardRepository {
     statement.run()
   }
 
+  applyMexcSnapshot(
+    snapshot: Map<string, { lastPrice: number; amount24: number | null }>,
+    updatedAt: string,
+    utcDate: string
+  ): void {
+    const cards = this.getCardsForMexcSync()
+
+    if (cards.length === 0) {
+      return
+    }
+
+    this.withTransaction(() => {
+      const updateSyncedStatement = this.db.prepare(`
+        UPDATE cards
+        SET mexc_price = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
+        WHERE id = ?
+      `)
+      const markNotFoundStatement = this.db.prepare(`
+        UPDATE cards
+        SET mexc_price = NULL, mexc_price_updated_at = NULL, mexc_sync_status = 'not_found'
+        WHERE id = ?
+      `)
+
+      for (const card of cards) {
+        const marketSnapshot = snapshot.get(`${card.symbol}_USDT`)
+
+        if (!marketSnapshot) {
+          markNotFoundStatement.run(card.id)
+          continue
+        }
+
+        const nextDailyAmounts =
+          typeof marketSnapshot.amount24 === 'number'
+            ? this.rollDailyAmounts(
+                this.parseDailyAmounts(card.mexc_daily_amounts_3m),
+                card.mexc_daily_amounts_utc_date,
+                marketSnapshot.amount24,
+                utcDate
+              )
+            : {
+                values: this.parseDailyAmounts(card.mexc_daily_amounts_3m),
+                utcDate: card.mexc_daily_amounts_utc_date
+              }
+
+        updateSyncedStatement.run(
+          marketSnapshot.lastPrice,
+          this.serializeDailyAmounts(nextDailyAmounts.values),
+          nextDailyAmounts.utcDate,
+          updatedAt,
+          card.id
+        )
+      }
+    })
+  }
+
   getById(id: number): StoredCard | null {
     const statement = this.db.prepare(`
       SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
@@ -227,7 +278,7 @@ export class CardRepository {
       CREATE TABLE IF NOT EXISTS cards (
         id INTEGER PRIMARY KEY,
         symbol TEXT NOT NULL,
-        buy_price_safe REAL NOT NULL,
+        buy_price_safe REAL NULL,
         buy_price_risk REAL NULL,
         sell_price REAL NULL,
         created_at TEXT NOT NULL,
@@ -239,13 +290,17 @@ export class CardRepository {
       )
     `)
 
-    const columnInfo = this.db.prepare('PRAGMA table_info(cards)')
-    const columns = new Set(
-      (columnInfo.all() as unknown as Array<{ name: string }>).map((column) => column.name)
-    )
+    const columns = this.readColumns()
 
     if (columns.has('price')) {
-      this.rebuildLegacyPriceSchema(columns)
+      this.rebuildCardsSchema(columns)
+      this.initializeSchema()
+      return
+    }
+
+    if (this.needsRelaxedBuyPriceSafeConstraint(columns)) {
+      this.rebuildCardsSchema(columns)
+      this.initializeSchema()
       return
     }
 
@@ -287,12 +342,41 @@ export class CardRepository {
       SET mexc_sync_status = 'pending'
       WHERE mexc_sync_status IS NULL OR mexc_sync_status = ''
     `)
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cards_symbol ON cards (symbol);
+      CREATE INDEX IF NOT EXISTS idx_cards_created_at_id ON cards (created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_cards_mexc_sync_status ON cards (mexc_sync_status);
+    `)
   }
 
-  private rebuildLegacyPriceSchema(columns: Set<string>): void {
+  private configureDatabase(): void {
+    this.db.exec('PRAGMA busy_timeout = 5000')
+
+    if (this.usesFileDatabase) {
+      this.db.exec('PRAGMA journal_mode = WAL')
+    }
+  }
+
+  private readColumns(): Map<string, ColumnInfoRow> {
+    const columnInfo = this.db.prepare('PRAGMA table_info(cards)')
+    const rows = columnInfo.all() as unknown as ColumnInfoRow[]
+
+    return new Map(rows.map((column) => [column.name, column]))
+  }
+
+  private needsRelaxedBuyPriceSafeConstraint(columns: Map<string, ColumnInfoRow>): boolean {
+    const buyPriceSafe = columns.get('buy_price_safe')
+
+    return buyPriceSafe?.notnull === 1
+  }
+
+  private rebuildCardsSchema(columns: Map<string, ColumnInfoRow>): void {
     const buyPriceSafeSelect = columns.has('buy_price_safe')
-      ? 'COALESCE(buy_price_safe, price)'
-      : 'price'
+      ? 'buy_price_safe'
+      : columns.has('price')
+        ? 'price'
+        : 'NULL'
     const buyPriceRiskSelect = columns.has('buy_price_risk') ? 'buy_price_risk' : 'NULL'
     const sellPriceSelect = columns.has('sell_price') ? 'sell_price' : 'NULL'
     const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
@@ -311,7 +395,7 @@ export class CardRepository {
       CREATE TABLE cards (
         id INTEGER PRIMARY KEY,
         symbol TEXT NOT NULL,
-        buy_price_safe REAL NOT NULL,
+        buy_price_safe REAL NULL,
         buy_price_risk REAL NULL,
         sell_price REAL NULL,
         created_at TEXT NOT NULL,
@@ -368,6 +452,74 @@ export class CardRepository {
       mexcDailyAmountsUtcDate: row.mexc_daily_amounts_utc_date,
       mexcPriceUpdatedAt: row.mexc_price_updated_at,
       mexcSyncStatus: row.mexc_sync_status
+    }
+  }
+
+  private getCardsForMexcSync(symbol?: string): MexcSyncCardRow[] {
+    if (symbol) {
+      const statement = this.db.prepare(`
+        SELECT id, symbol, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+        FROM cards
+        WHERE symbol = ?
+      `)
+
+      return statement.all(symbol) as unknown as MexcSyncCardRow[]
+    }
+
+    const statement = this.db.prepare(`
+      SELECT id, symbol, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+      FROM cards
+    `)
+
+    return statement.all() as unknown as MexcSyncCardRow[]
+  }
+
+  private applySyncedMexcRows(
+    cards: MexcSyncCardRow[],
+    mexcPrice: number,
+    updatedAt: string,
+    options?: { amount24?: number | null; utcDate?: string }
+  ): void {
+    const statement = this.db.prepare(`
+      UPDATE cards
+      SET mexc_price = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
+      WHERE id = ?
+    `)
+
+    for (const card of cards) {
+      const nextDailyAmounts =
+        options?.utcDate && typeof options.amount24 === 'number'
+          ? this.rollDailyAmounts(
+              this.parseDailyAmounts(card.mexc_daily_amounts_3m),
+              card.mexc_daily_amounts_utc_date,
+              options.amount24,
+              options.utcDate
+            )
+          : {
+              values: this.parseDailyAmounts(card.mexc_daily_amounts_3m),
+              utcDate: card.mexc_daily_amounts_utc_date
+            }
+
+      statement.run(
+        mexcPrice,
+        this.serializeDailyAmounts(nextDailyAmounts.values),
+        nextDailyAmounts.utcDate,
+        updatedAt,
+        card.id
+      )
+    }
+  }
+
+  private withTransaction<T>(callback: () => T): T {
+    this.db.exec('BEGIN')
+
+    try {
+      const result = callback()
+      this.db.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
     }
   }
 

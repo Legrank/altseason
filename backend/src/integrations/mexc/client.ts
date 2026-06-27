@@ -1,8 +1,14 @@
 const PUBLIC_IP_WEIGHT_LIMIT_PER_10_SECONDS = 300
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000
+const FUTURES_CONTRACT_DETAILS_PATH = '/api/v1/contract/detail/country'
 const FUTURES_TICKER_PATH = '/api/v1/contract/ticker'
 const FUTURES_KLINE_PATH_PREFIX = '/api/v1/contract/kline/'
 const DAILY_KLINE_INTERVAL = 'Day1'
+
+interface MexcContractDetailItem {
+  symbol?: string
+  quoteCoin?: string
+}
 
 interface MexcFuturesTickerItem {
   symbol: string
@@ -59,6 +65,38 @@ export class MexcClient {
     this.baseUrl = options.baseUrl ?? 'https://contract.mexc.com'
     this.fetchImpl = options.fetchImpl ?? fetch
     this.now = options.now ?? Date.now
+  }
+
+  async getUsdtFuturesContractSymbols(): Promise<string[]> {
+    const payload = await this.requestJson(
+      FUTURES_CONTRACT_DETAILS_PATH,
+      'Failed to parse MEXC futures contract detail response.'
+    )
+
+    if (!this.isValidResponseEnvelope(payload) || !Array.isArray(payload.data)) {
+      throw new MexcClientError('parse', 'Unexpected MEXC futures contract detail payload shape.')
+    }
+
+    const symbols = new Set<string>()
+
+    for (const item of payload.data as MexcContractDetailItem[]) {
+      if (typeof item?.symbol !== 'string') {
+        continue
+      }
+
+      const normalizedSymbol = item.symbol.trim().toUpperCase()
+      const quoteCoin = typeof item.quoteCoin === 'string' ? item.quoteCoin.trim().toUpperCase() : ''
+
+      if (!normalizedSymbol) {
+        continue
+      }
+
+      if (quoteCoin === 'USDT' || normalizedSymbol.endsWith('_USDT')) {
+        symbols.add(normalizedSymbol)
+      }
+    }
+
+    return [...symbols].sort((left, right) => left.localeCompare(right))
   }
 
   async getAllUsdtFuturesPrices(): Promise<Map<string, MexcFuturesTickerSnapshot>> {

@@ -74,7 +74,7 @@ Possible `mexcSyncStatus` values:
 
 - The backend runs one immediate MEXC sync on startup.
 - After that it refreshes prices every 5 minutes.
-- `buyPriceSafe` is required; `buyPriceRisk` and `sellPrice` are optional.
+- `buyPriceSafe`, `buyPriceRisk`, and `sellPrice` are optional.
 - Manual card prices and MEXC futures price are stored separately.
 - A saved symbol like `BTC` maps to the exact MEXC USDT futures contract `BTC_USDT`.
 - The synced MEXC value is the futures ticker field `lastPrice`.

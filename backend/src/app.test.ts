@@ -67,6 +67,29 @@ test('creates a card with computed average daily volume and returns it in the li
   assert.deepEqual(listResponse.json(), [createdCard])
 })
 
+test('creates a card without buyPriceSafe when only the symbol is provided', async (t) => {
+  const { app, repository } = createTestContext()
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/cards',
+    payload: {
+      symbol: 'sui'
+    }
+  })
+
+  assert.equal(response.statusCode, 201)
+  assert.equal(response.json().symbol, 'SUI')
+  assert.equal(response.json().buyPriceSafe, null)
+  assert.equal(response.json().buyPriceRisk, null)
+  assert.equal(response.json().sellPrice, null)
+})
+
 test('updates a card without changing createdAt', async (t) => {
   const { app, repository } = createTestContext()
 
@@ -164,7 +187,7 @@ test('rejects invalid payloads', async (t) => {
       url: '/api/cards',
       payload: {
         symbol: 'ADA',
-        buyPriceSafe: Number.NaN
+        buyPriceSafe: -1
       }
     }),
     app.inject({

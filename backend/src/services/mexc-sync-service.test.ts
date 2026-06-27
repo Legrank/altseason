@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { existsSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 
 import { CardRepository } from '../repository.js'
@@ -157,4 +161,57 @@ test('does not roll daily amounts more than once on the same UTC day', async (t)
 
   assert.deepEqual(updated?.mexcDailyAmounts3m, [300, 200, 100])
   assert.equal(updated?.mexcDailyAmountsUtcDate, '2026-06-24')
+})
+
+test('syncs 1000 cards in one batch without degrading sharply', async (t) => {
+  const databasePath = join(tmpdir(), `altseason-sync-batch-${Date.now()}.sqlite`)
+  const repository = new CardRepository(databasePath)
+  const snapshot = new Map<string, { lastPrice: number; amount24: number | null }>()
+  const cardCount = 1000
+
+  for (let index = 0; index < cardCount; index += 1) {
+    const symbol = `COIN${String(index).padStart(4, '0')}`
+    repository.create({
+      symbol,
+      buyPriceSafe: index + 100,
+      buyPriceRisk: null,
+      sellPrice: null
+    })
+    snapshot.set(`${symbol}_USDT`, {
+      lastPrice: index + 1000.5,
+      amount24: index + 5000
+    })
+  }
+
+  t.after(() => {
+    repository.close()
+
+    for (const path of [`${databasePath}-shm`, `${databasePath}-wal`, databasePath]) {
+      if (existsSync(path)) {
+        unlinkSync(path)
+      }
+    }
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return snapshot
+      }
+    },
+    now: () => new Date('2026-06-27T12:00:00.000Z')
+  })
+
+  const startedAt = performance.now()
+  await service.syncNow()
+  const durationMs = performance.now() - startedAt
+  const cards = repository.list()
+
+  t.diagnostic(`1000-card sync completed in ${durationMs.toFixed(2)}ms`)
+
+  assert.equal(cards.length, cardCount)
+  assert.equal(cards.every((card) => card.mexcSyncStatus === 'synced'), true)
+  assert.equal(cards.every((card) => card.mexcPrice !== null), true)
+  assert.ok(durationMs < 3000)
 })
