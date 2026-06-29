@@ -23,6 +23,13 @@ const thresholdEvents = ref<RatioThresholdEvent[]>([])
 const thresholdEventsLoading = ref(false)
 const thresholdEventsErrorMessage = ref('')
 const volumeSignalsView = ref<VolumeSignalsView>('current-ratios')
+const cardSearchQuery = ref('')
+const cardFilters = reactive({
+  withAnyManualPrice: false,
+  aboveBuyPriceSafe: false,
+  aboveBuyPriceRisk: false,
+  belowSellPrice: false
+})
 
 const modalState = reactive<{
   open: boolean
@@ -74,6 +81,47 @@ const sortedVolumeCards = computed(() =>
 
 const filteredVolumeCards = computed(() =>
   sortedVolumeCards.value.filter((card) => card.ratio !== null && card.ratio > volumeRatioThreshold.value)
+)
+
+const normalizedCardSearchQuery = computed(() => cardSearchQuery.value.trim().toUpperCase())
+
+const filteredCards = computed(() =>
+  cards.value.filter((card) => {
+    if (normalizedCardSearchQuery.value !== '' && !card.symbol.toUpperCase().startsWith(normalizedCardSearchQuery.value)) {
+      return false
+    }
+
+    const currentPrice = card.mexcPrice
+
+    if (
+      cardFilters.withAnyManualPrice &&
+      card.buyPriceSafe === null &&
+      card.buyPriceRisk === null &&
+      card.sellPrice === null
+    ) {
+      return false
+    }
+
+    if (
+      cardFilters.aboveBuyPriceSafe &&
+      (currentPrice === null || card.buyPriceSafe === null || currentPrice <= card.buyPriceSafe)
+    ) {
+      return false
+    }
+
+    if (
+      cardFilters.aboveBuyPriceRisk &&
+      (currentPrice === null || card.buyPriceRisk === null || currentPrice <= card.buyPriceRisk)
+    ) {
+      return false
+    }
+
+    if (cardFilters.belowSellPrice && (currentPrice === null || card.sellPrice === null || currentPrice >= card.sellPrice)) {
+      return false
+    }
+
+    return true
+  })
 )
 
 const highlightedThresholdEvents = computed(() =>
@@ -129,6 +177,21 @@ function openCreateModal() {
   modalErrorMessage.value = ''
   modalState.open = true
   modalState.card = null
+}
+
+function resetCardFilters() {
+  cardFilters.withAnyManualPrice = false
+  cardFilters.aboveBuyPriceSafe = false
+  cardFilters.aboveBuyPriceRisk = false
+  cardFilters.belowSellPrice = false
+}
+
+function handleCardSearchInput() {
+  resetCardFilters()
+}
+
+function handleCardFilterChange() {
+  cardSearchQuery.value = ''
 }
 
 function openEditModal(card: Card) {
@@ -267,14 +330,64 @@ onUnmounted(() => {
         </p>
       </section>
 
-      <section v-else-if="currentView === 'cards'" class="cards-grid">
-        <CardItem
-          v-for="card in cards"
-          :key="card.id"
-          :card="card"
-          @edit="openEditModal"
-          @delete="deleteCard"
-        />
+      <section v-else-if="currentView === 'cards'" class="cards-screen">
+        <div class="signal-filter-panel cards-filter-panel">
+          <div>
+            <p class="label">Card filters</p>
+            <p class="filter-value">Showing {{ filteredCards.length }} of {{ cards.length }} cards</p>
+          </div>
+
+          <label class="field cards-search-field">
+            <span>Search by symbol prefix</span>
+            <input
+              v-model="cardSearchQuery"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              placeholder="A, AH, BTC..."
+              @input="handleCardSearchInput"
+            />
+          </label>
+
+          <div class="cards-filter-options">
+            <label class="filter-toggle">
+              <input v-model="cardFilters.withAnyManualPrice" type="checkbox" @change="handleCardFilterChange" />
+              <span>At least one price is set</span>
+            </label>
+
+            <label class="filter-toggle">
+              <input v-model="cardFilters.aboveBuyPriceSafe" type="checkbox" @change="handleCardFilterChange" />
+              <span>Current price above buy price safe</span>
+            </label>
+
+            <label class="filter-toggle">
+              <input v-model="cardFilters.aboveBuyPriceRisk" type="checkbox" @change="handleCardFilterChange" />
+              <span>Current price above buy price risk</span>
+            </label>
+
+            <label class="filter-toggle">
+              <input v-model="cardFilters.belowSellPrice" type="checkbox" @change="handleCardFilterChange" />
+              <span>Current price below sell price</span>
+            </label>
+          </div>
+        </div>
+
+        <section v-if="filteredCards.length === 0" class="empty-state signal-empty">
+          <p class="empty-title">No cards match the selected filters</p>
+          <p class="empty-copy">
+            Change or clear the filters to show more symbols.
+          </p>
+        </section>
+
+        <section v-else class="cards-grid">
+          <CardItem
+            v-for="card in filteredCards"
+            :key="card.id"
+            :card="card"
+            @edit="openEditModal"
+            @delete="deleteCard"
+          />
+        </section>
       </section>
 
       <section v-else class="signal-screen">
