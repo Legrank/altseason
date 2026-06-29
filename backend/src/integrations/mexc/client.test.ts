@@ -126,3 +126,31 @@ test('enters cooldown after 429 and does not hit fetch again before retry-after 
 
   assert.equal(calls, 2)
 })
+
+test('rate limit error for ticker reports documented 20 requests per 2 seconds limit', async () => {
+  const client = new MexcClient({
+    fetchImpl: async () => new Response('', { status: 429 })
+  })
+
+  await assert.rejects(() => client.getAllUsdtFuturesPrices(), (error: unknown) => {
+    assert.ok(error instanceof MexcClientError)
+    assert.equal(error.code, 'rate_limit')
+    assert.match(error.message, /\/api\/v1\/contract\/ticker/)
+    assert.match(error.message, /20 requests \/ 2 seconds/)
+    return true
+  })
+})
+
+test('rate limit error for contract detail country reports closest documented detail limit', async () => {
+  const client = new MexcClient({
+    fetchImpl: async () => new Response('', { status: 429 })
+  })
+
+  await assert.rejects(() => client.getUsdtFuturesContractSymbols(), (error: unknown) => {
+    assert.ok(error instanceof MexcClientError)
+    assert.equal(error.code, 'rate_limit')
+    assert.match(error.message, /\/api\/v1\/contract\/detail\/country/)
+    assert.match(error.message, /1 request \/ 5 seconds/)
+    return true
+  })
+})

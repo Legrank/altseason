@@ -32,6 +32,7 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   assert.equal(cards[0].buyPriceRisk, null)
   assert.equal(cards[0].sellPrice, null)
   assert.equal(cards[0].mexcPrice, null)
+  assert.equal(cards[0].mexcAmount24h, null)
   assert.equal(cards[0].mexcDailyAmounts3m, null)
   assert.equal(cards[0].mexcDailyAmountsUtcDate, null)
   assert.equal(cards[0].mexcPriceUpdatedAt, null)
@@ -45,9 +46,65 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   })
 
   assert.equal(createResult.buyPriceSafe, 200)
+  assert.equal(createResult.mexcAmount24h, null)
   assert.equal(createResult.mexcDailyAmounts3m, null)
   assert.equal(createResult.mexcDailyAmountsUtcDate, null)
 
+  repository.close()
+  unlinkSync(databasePath)
+})
+
+test('adds mexc_amount_24h and seeds it from existing daily amounts', () => {
+  const databasePath = join(tmpdir(), `altseason-amount24-${Date.now()}.sqlite`)
+  const existingDatabase = new DatabaseSync(databasePath)
+
+  existingDatabase.exec(`
+    CREATE TABLE cards (
+      id INTEGER PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      buy_price_safe REAL NULL,
+      buy_price_risk REAL NULL,
+      sell_price REAL NULL,
+      created_at TEXT NOT NULL,
+      mexc_price REAL NULL,
+      mexc_daily_amounts_3m TEXT NULL,
+      mexc_daily_amounts_utc_date TEXT NULL,
+      mexc_price_updated_at TEXT NULL,
+      mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
+    )
+  `)
+  existingDatabase.exec(`
+    INSERT INTO cards (
+      symbol,
+      buy_price_safe,
+      created_at,
+      mexc_daily_amounts_3m,
+      mexc_daily_amounts_utc_date,
+      mexc_sync_status
+    )
+    VALUES (
+      'BTC',
+      100,
+      '2026-06-23T00:00:00.000Z',
+      '[999,888,777]',
+      '2026-06-24',
+      'synced'
+    )
+  `)
+  existingDatabase.close()
+
+  const repository = new CardRepository(databasePath)
+  const migrated = repository.list()[0]
+  const reopenedDatabase = new DatabaseSync(databasePath)
+  const amount24Column = (
+    reopenedDatabase.prepare('PRAGMA table_info(cards)').all() as Array<{ name: string }>
+  ).find((column) => column.name === 'mexc_amount_24h')
+
+  assert.equal(migrated.mexcAmount24h, 999)
+  assert.deepEqual(migrated.mexcDailyAmounts3m, [999, 888, 777])
+  assert.ok(amount24Column)
+
+  reopenedDatabase.close()
   repository.close()
   unlinkSync(databasePath)
 })

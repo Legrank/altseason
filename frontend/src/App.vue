@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 
 import { cardsApi } from './api'
 import CardItem from './components/CardItem.vue'
 import CardModal from './components/CardModal.vue'
+import VolumeSignalCard from './components/VolumeSignalCard.vue'
 import type { Card } from './types'
+
+type AppView = 'cards' | 'volume-signals'
 
 const cards = ref<Card[]>([])
 const loading = ref(true)
@@ -12,6 +15,7 @@ const submitting = ref(false)
 const errorMessage = ref('')
 const modalErrorMessage = ref('')
 const refreshTimer = ref<number | null>(null)
+const currentView = ref<AppView>('cards')
 
 const modalState = reactive<{
   open: boolean
@@ -20,6 +24,49 @@ const modalState = reactive<{
   open: false,
   card: null
 })
+
+const sortedVolumeCards = computed(() =>
+  cards.value
+    .map((card) => {
+      const ratio =
+        card.mexcVolume24h !== null &&
+        card.mexcAvgDailyVolume3m !== null &&
+        card.mexcAvgDailyVolume3m > 0
+          ? card.mexcVolume24h / card.mexcAvgDailyVolume3m
+          : null
+
+      return {
+        id: card.id,
+        symbol: card.symbol,
+        averageVolume: card.mexcAvgDailyVolume3m,
+        volume24h: card.mexcVolume24h,
+        ratio
+      }
+    })
+    .sort((left, right) => {
+      if (left.ratio === null && right.ratio === null) {
+        return left.symbol.localeCompare(right.symbol)
+      }
+
+      if (left.ratio === null) {
+        return 1
+      }
+
+      if (right.ratio === null) {
+        return -1
+      }
+
+      return right.ratio - left.ratio || left.symbol.localeCompare(right.symbol)
+    })
+)
+
+function syncViewFromHash() {
+  currentView.value = window.location.hash === '#volume-signals' ? 'volume-signals' : 'cards'
+}
+
+function navigateTo(view: AppView) {
+  window.location.hash = view === 'volume-signals' ? 'volume-signals' : 'cards'
+}
 
 async function loadCards(options?: { background?: boolean }) {
   if (!options?.background) {
@@ -99,11 +146,13 @@ function handleVisibilityChange() {
 }
 
 onMounted(() => {
+  syncViewFromHash()
   void loadCards()
   refreshTimer.value = window.setInterval(() => {
     void loadCards({ background: true })
   }, 60_000)
   document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('hashchange', syncViewFromHash)
 })
 
 onUnmounted(() => {
@@ -112,6 +161,7 @@ onUnmounted(() => {
   }
 
   document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('hashchange', syncViewFromHash)
 })
 </script>
 
@@ -121,16 +171,41 @@ onUnmounted(() => {
       <section class="hero">
         <div>
           <p class="eyebrow">Altseason / MEXC Watch</p>
-          <h1>Crypto cards with live MEXC futures pricing</h1>
-          <p class="hero-copy">
+          <h1>{{ currentView === 'cards' ? 'Crypto cards with live MEXC futures pricing' : 'Volume ratio signals' }}</h1>
+          <p class="hero-copy" v-if="currentView === 'cards'">
             Manual price stays editable. MEXC USDT futures price is synced in the backend every
             5 minutes and reflected here on the next refresh.
           </p>
+          <p class="hero-copy" v-else>
+            Symbols are sorted by the ratio of the latest 24-hour volume to the 3-month average
+            daily volume, from highest to lowest.
+          </p>
         </div>
 
-        <button class="primary-button" type="button" @click="openCreateModal">
-          Create new card
-        </button>
+        <div class="hero-actions">
+          <div class="view-switcher" role="tablist" aria-label="App screens">
+            <button
+              type="button"
+              class="view-tab"
+              :class="{ active: currentView === 'cards' }"
+              @click="navigateTo('cards')"
+            >
+              Cards
+            </button>
+            <button
+              type="button"
+              class="view-tab"
+              :class="{ active: currentView === 'volume-signals' }"
+              @click="navigateTo('volume-signals')"
+            >
+              Volume screen
+            </button>
+          </div>
+
+          <button v-if="currentView === 'cards'" class="primary-button" type="button" @click="openCreateModal">
+            Create new card
+          </button>
+        </div>
       </section>
 
       <p v-if="errorMessage" class="banner banner-error">{{ errorMessage }}</p>
@@ -147,13 +222,31 @@ onUnmounted(() => {
         </p>
       </section>
 
-      <section v-else class="cards-grid">
+      <section v-else-if="currentView === 'cards'" class="cards-grid">
         <CardItem
           v-for="card in cards"
           :key="card.id"
           :card="card"
           @edit="openEditModal"
           @delete="deleteCard"
+        />
+      </section>
+
+      <section v-else-if="sortedVolumeCards.length === 0" class="empty-state">
+        <p class="empty-title">No volume data yet</p>
+        <p class="empty-copy">
+          Wait for MEXC volume sync or backfill to complete, then the ranking screen will appear here.
+        </p>
+      </section>
+
+      <section v-else class="signal-grid">
+        <VolumeSignalCard
+          v-for="card in sortedVolumeCards"
+          :key="card.id"
+          :symbol="card.symbol"
+          :average-volume="card.averageVolume"
+          :volume24h="card.volume24h"
+          :ratio="card.ratio"
         />
       </section>
     </main>

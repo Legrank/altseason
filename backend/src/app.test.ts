@@ -55,6 +55,7 @@ test('creates a card with computed average daily volume and returns it in the li
   assert.match(createdCard.createdAt, /^\d{4}-\d{2}-\d{2}T/)
   assert.equal(createdCard.mexcPrice, null)
   assert.equal(createdCard.mexcAvgDailyVolume3m, 110)
+  assert.equal(createdCard.mexcVolume24h, null)
   assert.equal(createdCard.mexcPriceUpdatedAt, null)
   assert.equal(createdCard.mexcSyncStatus, 'pending')
 
@@ -88,6 +89,7 @@ test('creates a card without buyPriceSafe when only the symbol is provided', asy
   assert.equal(response.json().buyPriceSafe, null)
   assert.equal(response.json().buyPriceRisk, null)
   assert.equal(response.json().sellPrice, null)
+  assert.equal(response.json().mexcVolume24h, null)
 })
 
 test('updates a card without changing createdAt', async (t) => {
@@ -127,6 +129,7 @@ test('updates a card without changing createdAt', async (t) => {
     buyPriceRisk: 170.25,
     sellPrice: 260,
     mexcPrice: null,
+    mexcVolume24h: null,
     mexcPriceUpdatedAt: null,
     mexcSyncStatus: 'pending'
   })
@@ -244,6 +247,7 @@ test('keeps MEXC fields when only manual price changes', async (t) => {
   assert.equal(updated.json().sellPrice, 280)
   assert.equal(updated.json().mexcPrice, 62000.5)
   assert.equal(updated.json().mexcAvgDailyVolume3m, null)
+  assert.equal(updated.json().mexcVolume24h, null)
   assert.equal(updated.json().mexcPriceUpdatedAt, '2026-06-23T10:00:00.000Z')
   assert.equal(updated.json().mexcSyncStatus, 'synced')
 })
@@ -271,6 +275,7 @@ test('creates a card with optional risk and sell prices', async (t) => {
   assert.equal(response.json().buyPriceSafe, 0.55)
   assert.equal(response.json().buyPriceRisk, 0.48)
   assert.equal(response.json().sellPrice, 0.91)
+  assert.equal(response.json().mexcVolume24h, null)
 })
 
 test('creates a card even when average daily volume lookup fails', async (t) => {
@@ -296,4 +301,5 @@ test('creates a card even when average daily volume lookup fails', async (t) => 
 
   assert.equal(response.statusCode, 201)
   assert.equal(response.json().mexcAvgDailyVolume3m, null)
+  assert.equal(response.json().mexcVolume24h, null)
 })

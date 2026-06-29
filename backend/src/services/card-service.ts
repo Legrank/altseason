@@ -75,6 +75,7 @@ export class CardService {
       createdAt: card.createdAt,
       mexcPrice: card.mexcPrice,
       mexcAvgDailyVolume3m: calculateRobustAverage(card.mexcDailyAmounts3m ?? []),
+      mexcVolume24h: card.mexcAmount24h,
       mexcPriceUpdatedAt: card.mexcPriceUpdatedAt,
       mexcSyncStatus: card.mexcSyncStatus
     }

@@ -57,6 +57,40 @@ button {
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.28);
 }
 
+.hero-actions {
+  display: grid;
+  gap: 14px;
+  justify-items: end;
+}
+
+.view-switcher {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 6px;
+  gap: 6px;
+  border-radius: 18px;
+  background: rgba(11, 11, 11, 0.36);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.view-tab {
+  border: 0;
+  border-radius: 14px;
+  padding: 10px 14px;
+  color: rgba(247, 241, 232, 0.82);
+  background: transparent;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.view-tab.active {
+  background: linear-gradient(135deg, rgba(255, 154, 61, 0.94), rgba(255, 106, 61, 0.94));
+  color: #17110d;
+  font-weight: 700;
+}
+
 .eyebrow,
 .modal-eyebrow,
 .label {
@@ -105,7 +139,15 @@ button {
   margin-top: 26px;
 }
 
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  margin-top: 26px;
+}
+
 .card,
+.signal-card,
 .empty-state,
 .modal-panel {
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -120,6 +162,15 @@ button {
   padding: 20px;
 }
 
+.signal-card {
+  position: relative;
+  overflow: hidden;
+  padding: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(0, 184, 148, 0.18), transparent 28%),
+    linear-gradient(160deg, rgba(16, 16, 16, 0.62), rgba(19, 27, 22, 0.52));
+}
+
 .card::after {
   content: "";
   position: absolute;
@@ -131,12 +182,29 @@ button {
   pointer-events: none;
 }
 
+.signal-card::after {
+  content: "";
+  position: absolute;
+  inset: auto auto -36px -36px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 184, 148, 0.15), transparent 72%);
+  pointer-events: none;
+}
+
 .card > * {
   position: relative;
   z-index: 1;
 }
 
+.signal-card > * {
+  position: relative;
+  z-index: 1;
+}
+
 .card-topline,
+.signal-card-topline,
 .card-actions,
 .modal-header,
 .modal-actions {
@@ -163,15 +231,39 @@ button {
   font-size: 0.92rem;
 }
 
+.ratio-pill {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(0, 184, 148, 0.16);
+  color: #8ef4d7;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
 .card-body {
   display: grid;
   gap: 24px;
   margin: 28px 0;
 }
 
+.signal-card-body {
+  display: grid;
+  gap: 22px;
+  margin-top: 24px;
+}
+
 .metrics {
   display: grid;
   gap: 18px;
+}
+
+.signal-metrics {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .price {
@@ -368,6 +460,10 @@ button {
     align-items: stretch;
   }
 
+  .hero-actions {
+    justify-items: stretch;
+  }
+
   .hero h1 {
     max-width: none;
   }
@@ -379,9 +475,10 @@ button {
     flex-direction: column;
   }
 
+  .view-switcher,
   .card-actions > button,
   .modal-actions > button,
-  .hero > button {
+  .hero-actions > .primary-button {
     width: 100%;
   }
 }

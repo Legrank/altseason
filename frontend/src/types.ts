@@ -9,6 +9,7 @@ export interface Card {
   createdAt: string
   mexcPrice: number | null
   mexcAvgDailyVolume3m: number | null
+  mexcVolume24h: number | null
   mexcPriceUpdatedAt: string | null
   mexcSyncStatus: MexcSyncStatus
 }

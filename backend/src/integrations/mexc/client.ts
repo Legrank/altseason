@@ -1,4 +1,3 @@
-const PUBLIC_IP_WEIGHT_LIMIT_PER_10_SECONDS = 300
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000
 const FUTURES_CONTRACT_DETAILS_PATH = '/api/v1/contract/detail/country'
 const FUTURES_TICKER_PATH = '/api/v1/contract/ticker'
@@ -176,6 +175,18 @@ export class MexcClient {
     return 'data' in payload && typeof success === 'boolean' && typeof code === 'number'
   }
 
+  private describeDocumentedRateLimit(path: string): string {
+    if (path === FUTURES_TICKER_PATH || path.startsWith(FUTURES_KLINE_PATH_PREFIX)) {
+      return 'documented limit: 20 requests / 2 seconds'
+    }
+
+    if (path === FUTURES_CONTRACT_DETAILS_PATH) {
+      return 'official docs do not list /api/v1/contract/detail/country; the closest documented endpoint /api/v1/contract/detail is limited to 1 request / 5 seconds'
+    }
+
+    return 'documented limit varies by endpoint'
+  }
+
   private async requestJson(path: string, parseErrorMessage: string): Promise<unknown> {
     this.assertCooldown()
 
@@ -193,7 +204,7 @@ export class MexcClient {
 
       throw new MexcClientError(
         'rate_limit',
-        `MEXC futures public API rate limit reached for IP-weighted endpoints (${PUBLIC_IP_WEIGHT_LIMIT_PER_10_SECONDS} weight / 10 seconds).`,
+        `MEXC futures public API rate limit reached for ${path} (${this.describeDocumentedRateLimit(path)}).`,
         {
           retryAfterMs,
           statusCode: response.status

@@ -58,6 +58,8 @@ Single-user MVP for managing crypto cards with manual pricing and live MEXC USDT
   "sellPrice": 78000,
   "createdAt": "2026-06-23T10:00:00.000Z",
   "mexcPrice": 61059.5,
+  "mexcAvgDailyVolume3m": 12500000,
+  "mexcVolume24h": 14800000,
   "mexcPriceUpdatedAt": "2026-06-23T10:05:00.000Z",
   "mexcSyncStatus": "synced"
 }

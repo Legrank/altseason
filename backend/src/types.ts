@@ -9,6 +9,7 @@ export interface Card {
   createdAt: string
   mexcPrice: number | null
   mexcAvgDailyVolume3m: number | null
+  mexcVolume24h: number | null
   mexcPriceUpdatedAt: string | null
   mexcSyncStatus: MexcSyncStatus
 }
@@ -21,6 +22,7 @@ export interface StoredCard {
   sellPrice: number | null
   createdAt: string
   mexcPrice: number | null
+  mexcAmount24h: number | null
   mexcDailyAmounts3m: number[] | null
   mexcDailyAmountsUtcDate: string | null
   mexcPriceUpdatedAt: string | null

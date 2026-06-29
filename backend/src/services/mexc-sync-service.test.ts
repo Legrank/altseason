@@ -38,7 +38,9 @@ test('syncs all tracked symbols from one snapshot', async (t) => {
 
   assert.equal(calls, 1)
   assert.equal(cards.find((card) => card.symbol === 'BTC')?.mexcPrice, 62000.1)
+  assert.equal(cards.find((card) => card.symbol === 'BTC')?.mexcAmount24h, 1100)
   assert.equal(cards.find((card) => card.symbol === 'ETH')?.mexcPrice, 3400.2)
+  assert.equal(cards.find((card) => card.symbol === 'ETH')?.mexcAmount24h, 2200)
   assert.equal(cards.every((card) => card.mexcSyncStatus === 'synced'), true)
 })
 
@@ -68,7 +70,9 @@ test('marks symbols as not found when snapshot lacks their USDT pair', async (t)
   const abc = cards.find((card) => card.symbol === 'ABC')
 
   assert.equal(btc?.mexcSyncStatus, 'synced')
+  assert.equal(btc?.mexcAmount24h, 1100)
   assert.equal(abc?.mexcSyncStatus, 'not_found')
+  assert.equal(abc?.mexcAmount24h, null)
   assert.equal(abc?.mexcPrice, null)
   assert.equal(abc?.mexcPriceUpdatedAt, null)
 })
@@ -99,9 +103,11 @@ test('does not wipe last successful price when sync fails', async (t) => {
   const fresh = cards.find((card) => card.symbol === 'NEW')
 
   assert.equal(btc?.mexcPrice, 62000.1)
+  assert.equal(btc?.mexcAmount24h, null)
   assert.equal(btc?.mexcPriceUpdatedAt, '2026-06-23T11:00:00.000Z')
   assert.equal(btc?.mexcSyncStatus, 'synced')
   assert.equal(fresh?.mexcPrice, null)
+  assert.equal(fresh?.mexcAmount24h, null)
   assert.equal(fresh?.mexcSyncStatus, 'error')
 })
 
