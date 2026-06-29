@@ -1,4 +1,4 @@
-import type { Card, CardPayload } from './types'
+import type { Card, CardPayload, RatioThresholdEvent } from './types'
 
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -44,5 +44,11 @@ export const cardsApi = {
     return request<void>(`/api/cards/${id}`, {
       method: 'DELETE'
     })
+  }
+}
+
+export const ratioThresholdEventsApi = {
+  list(threshold: number) {
+    return request<RatioThresholdEvent[]>(`/api/ratio-threshold-events?threshold=${threshold}`)
   }
 }

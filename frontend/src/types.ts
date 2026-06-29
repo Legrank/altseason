@@ -14,6 +14,14 @@ export interface Card {
   mexcSyncStatus: MexcSyncStatus
 }
 
+export interface RatioThresholdEvent {
+  id: number
+  symbol: string
+  threshold: number
+  eventAt: string
+  crossedThresholdCount: number
+}
+
 export interface CardPayload {
   symbol: string
   buyPriceSafe: number | null

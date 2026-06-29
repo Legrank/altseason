@@ -8,6 +8,15 @@ import { CardService } from './services/card-service.js'
 function createTestContext(
   dailyVolumeProvider?: {
     getUsdtFuturesDailyAmounts(symbol: string, limit?: number): Promise<number[]>
+  },
+  ratioThresholdEventQueryService?: {
+    list(threshold: number): Array<{
+      id: number
+      symbol: string
+      threshold: number
+      eventAt: string
+      crossedThresholdCount: number
+    }>
   }
 ) {
   const repository = new CardRepository(':memory:')
@@ -15,7 +24,7 @@ function createTestContext(
     repository,
     dailyVolumeProvider
   })
-  const app = createApp(repository, cardService)
+  const app = createApp(repository, cardService, ratioThresholdEventQueryService)
 
   return {
     app,
@@ -23,6 +32,73 @@ function createTestContext(
     cardService
   }
 }
+
+test('lists ratio threshold events for the exact threshold', async (t) => {
+  const { app, repository } = createTestContext(undefined, {
+    list(threshold) {
+      assert.equal(threshold, 3)
+
+      return [
+        {
+          id: 10,
+          symbol: 'BTC',
+          threshold: 3,
+          eventAt: '2026-06-29T12:00:00.000Z',
+          crossedThresholdCount: 1
+        }
+      ]
+    }
+  })
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/api/ratio-threshold-events?threshold=3'
+  })
+
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), [
+    {
+      id: 10,
+      symbol: 'BTC',
+      threshold: 3,
+      eventAt: '2026-06-29T12:00:00.000Z',
+      crossedThresholdCount: 1
+    }
+  ])
+})
+
+test('rejects invalid ratio threshold event query values', async (t) => {
+  const { app, repository } = createTestContext()
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const invalidResponses = await Promise.all([
+    app.inject({
+      method: 'GET',
+      url: '/api/ratio-threshold-events'
+    }),
+    app.inject({
+      method: 'GET',
+      url: '/api/ratio-threshold-events?threshold=1'
+    }),
+    app.inject({
+      method: 'GET',
+      url: '/api/ratio-threshold-events?threshold=3.5'
+    })
+  ])
+
+  assert.equal(invalidResponses[0].statusCode, 400)
+  assert.equal(invalidResponses[1].statusCode, 400)
+  assert.equal(invalidResponses[2].statusCode, 400)
+})
 
 test('creates a card with computed average daily volume and returns it in the list', async (t) => {
   const { app, repository } = createTestContext({

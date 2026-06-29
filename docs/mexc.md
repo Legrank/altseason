@@ -23,6 +23,7 @@ Manual futures import also uses:
 
 The backend fetches the full futures market snapshot, then filters local symbols in memory.
 For average daily volume, the backend fetches daily kline data for the exact tracked contract and reads the `amount` series.
+The current 24-hour futures volume is stored separately from the 90-day history array.
 
 Saved symbol mapping:
 
@@ -61,10 +62,13 @@ Rules adopted in this project:
 - Only one sync may run at a time.
 - A successful sync updates:
   - `mexcPrice`
+  - `mexcAmount24h`
   - `mexcPriceUpdatedAt`
   - `mexcSyncStatus = 'synced'`
+- During a successful sync, the backend also evaluates ratio breakouts against thresholds `2..10` and records upward crossing events for the last 30 days only.
 - If `${symbol}_USDT` is missing from the MEXC futures snapshot:
   - `mexcPrice = null`
+  - `mexcAmount24h = null`
   - `mexcPriceUpdatedAt = null`
   - `mexcSyncStatus = 'not_found'`
 - If MEXC fails during sync:

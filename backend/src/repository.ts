@@ -2,7 +2,11 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import type { CardPayload, MexcSyncStatus, StoredCard } from './types.js'
+import { calculateRobustAverage } from './services/robust-average.js'
+import type { CardPayload, MexcSyncStatus, RatioThresholdEvent, StoredCard } from './types.js'
+
+const RATIO_EVENT_THRESHOLDS = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const
+const RATIO_EVENT_RETENTION_DAYS = 30
 
 interface CardRow {
   id: number
@@ -22,8 +26,17 @@ interface CardRow {
 interface MexcSyncCardRow {
   id: number
   symbol: string
+  mexc_amount_24h: number | null
   mexc_daily_amounts_3m: string | null
   mexc_daily_amounts_utc_date: string | null
+}
+
+interface RatioThresholdEventRow {
+  id: number
+  symbol: string
+  threshold: number
+  event_at: string
+  crossed_threshold_count: number
 }
 
 interface ColumnInfoRow {
@@ -190,6 +203,23 @@ export class CardRepository {
     return rows.map((row) => row.symbol)
   }
 
+  listRatioThresholdEvents(threshold: number): RatioThresholdEvent[] {
+    const statement = this.db.prepare(`
+      SELECT id, symbol, threshold, event_at, crossed_threshold_count
+      FROM ratio_threshold_events
+      WHERE threshold = ?
+      ORDER BY event_at DESC, id DESC
+    `)
+
+    return (statement.all(threshold) as unknown as RatioThresholdEventRow[]).map((row) => ({
+      id: row.id,
+      symbol: row.symbol,
+      threshold: row.threshold,
+      eventAt: row.event_at,
+      crossedThresholdCount: row.crossed_threshold_count
+    }))
+  }
+
   applyMexcPrice(
     symbol: string,
     mexcPrice: number,
@@ -258,18 +288,24 @@ export class CardRepository {
           continue
         }
 
+        const previousDailyAmounts = this.parseDailyAmounts(card.mexc_daily_amounts_3m)
+        const previousRatio = this.calculateRatio(card.mexc_amount_24h, previousDailyAmounts)
+
         const nextDailyAmounts =
           typeof marketSnapshot.amount24 === 'number'
             ? this.rollDailyAmounts(
-                this.parseDailyAmounts(card.mexc_daily_amounts_3m),
+                previousDailyAmounts,
                 card.mexc_daily_amounts_utc_date,
                 marketSnapshot.amount24,
                 utcDate
               )
             : {
-                values: this.parseDailyAmounts(card.mexc_daily_amounts_3m),
+                values: previousDailyAmounts,
                 utcDate: card.mexc_daily_amounts_utc_date
               }
+
+        const nextRatio = this.calculateRatio(marketSnapshot.amount24, nextDailyAmounts.values)
+        const crossedThresholds = this.detectCrossedThresholds(previousRatio, nextRatio)
 
         updateSyncedStatement.run(
           marketSnapshot.lastPrice,
@@ -279,7 +315,13 @@ export class CardRepository {
           updatedAt,
           card.id
         )
+
+        if (crossedThresholds.length > 0) {
+          this.insertRatioThresholdEvents(card.symbol, crossedThresholds, updatedAt)
+        }
       }
+
+      this.deleteExpiredRatioThresholdEvents(updatedAt)
     })
   }
 
@@ -309,6 +351,16 @@ export class CardRepository {
         mexc_daily_amounts_utc_date TEXT NULL,
         mexc_price_updated_at TEXT NULL,
         mexc_sync_status TEXT NOT NULL DEFAULT 'pending'
+      )
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ratio_threshold_events (
+        id INTEGER PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        threshold INTEGER NOT NULL,
+        event_at TEXT NOT NULL,
+        crossed_threshold_count INTEGER NOT NULL
       )
     `)
 
@@ -374,6 +426,9 @@ export class CardRepository {
       CREATE INDEX IF NOT EXISTS idx_cards_symbol ON cards (symbol);
       CREATE INDEX IF NOT EXISTS idx_cards_created_at_id ON cards (created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_cards_mexc_sync_status ON cards (mexc_sync_status);
+      CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_event_at ON ratio_threshold_events (event_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_threshold_event_at ON ratio_threshold_events (threshold, event_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_symbol_event_at ON ratio_threshold_events (symbol, event_at DESC, id DESC);
     `)
   }
 
@@ -490,7 +545,7 @@ export class CardRepository {
   private getCardsForMexcSync(symbol?: string): MexcSyncCardRow[] {
     if (symbol) {
       const statement = this.db.prepare(`
-        SELECT id, symbol, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+        SELECT id, symbol, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
         FROM cards
         WHERE symbol = ?
       `)
@@ -499,7 +554,7 @@ export class CardRepository {
     }
 
     const statement = this.db.prepare(`
-      SELECT id, symbol, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+      SELECT id, symbol, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
       FROM cards
     `)
 
@@ -541,6 +596,52 @@ export class CardRepository {
         card.id
       )
     }
+  }
+
+  private insertRatioThresholdEvents(symbol: string, thresholds: number[], eventAt: string): void {
+    const statement = this.db.prepare(`
+      INSERT INTO ratio_threshold_events (symbol, threshold, event_at, crossed_threshold_count)
+      VALUES (?, ?, ?, ?)
+    `)
+    const crossedThresholdCount = thresholds.length
+
+    for (const threshold of thresholds) {
+      statement.run(symbol, threshold, eventAt, crossedThresholdCount)
+    }
+  }
+
+  private deleteExpiredRatioThresholdEvents(referenceTimestamp: string): void {
+    const cutoffDate = new Date(referenceTimestamp)
+    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - RATIO_EVENT_RETENTION_DAYS)
+
+    this.db
+      .prepare(`
+        DELETE FROM ratio_threshold_events
+        WHERE event_at < ?
+      `)
+      .run(cutoffDate.toISOString())
+  }
+
+  private calculateRatio(amount24: number | null, dailyAmounts: number[] | null): number | null {
+    if (typeof amount24 !== 'number' || !Number.isFinite(amount24)) {
+      return null
+    }
+
+    const average = calculateRobustAverage(dailyAmounts ?? [])
+
+    if (average === null || average <= 0) {
+      return null
+    }
+
+    return amount24 / average
+  }
+
+  private detectCrossedThresholds(previousRatio: number | null, nextRatio: number | null): number[] {
+    if (previousRatio === null || nextRatio === null) {
+      return []
+    }
+
+    return RATIO_EVENT_THRESHOLDS.filter((threshold) => previousRatio <= threshold && nextRatio > threshold)
   }
 
   private withTransaction<T>(callback: () => T): T {

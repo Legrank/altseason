@@ -2,12 +2,17 @@ import Fastify from 'fastify'
 
 import { CardRepository } from './repository.js'
 import { CardService } from './services/card-service.js'
-import type { Card, CardPayload } from './types.js'
+import { RatioThresholdEventService } from './services/ratio-threshold-event-service.js'
+import type { Card, CardPayload, RatioThresholdEvent } from './types.js'
 
 interface CardMutationService {
   list(): Card[]
   create(payload: CardPayload): Promise<Card>
   update(id: number, payload: CardPayload): Promise<Card | null>
+}
+
+interface RatioThresholdEventQueryService {
+  list(threshold: number): RatioThresholdEvent[]
 }
 
 function normalizeOptionalPrice(value: unknown): number | null | undefined {
@@ -65,13 +70,31 @@ function normalizePayload(payload: unknown): CardPayload | null {
   }
 }
 
-export function createApp(repository: CardRepository, cardMutationService?: CardMutationService) {
+export function createApp(
+  repository: CardRepository,
+  cardMutationService?: CardMutationService,
+  ratioThresholdEventQueryService?: RatioThresholdEventQueryService
+) {
   const app = Fastify({ logger: false })
   const cards = cardMutationService ?? new CardService({ repository })
+  const ratioThresholdEvents =
+    ratioThresholdEventQueryService ?? new RatioThresholdEventService({ repository })
 
   app.get('/health', async () => ({ status: 'ok' }))
 
   app.get('/api/cards', async () => cards.list())
+
+  app.get('/api/ratio-threshold-events', async (request, reply) => {
+    const threshold = Number((request.query as { threshold?: string }).threshold)
+
+    if (!Number.isInteger(threshold) || threshold < 2 || threshold > 10) {
+      return reply.code(400).send({
+        message: 'Invalid threshold. "threshold" query parameter must be an integer between 2 and 10.'
+      })
+    }
+
+    return ratioThresholdEvents.list(threshold)
+  })
 
   app.post('/api/cards', async (request, reply) => {
     const payload = normalizePayload(request.body)

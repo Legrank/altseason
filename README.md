@@ -32,6 +32,7 @@ Single-user MVP for managing crypto cards with manual pricing and live MEXC USDT
 ## Cards API
 
 - `GET /api/cards`
+- `GET /api/ratio-threshold-events?threshold=3`
 - `POST /api/cards`
 - `PUT /api/cards/:id`
 - `DELETE /api/cards/:id`
@@ -72,6 +73,20 @@ Possible `mexcSyncStatus` values:
 - `not_found`
 - `error`
 
+`GET /api/ratio-threshold-events?threshold=3` returns exact breakout events for one threshold:
+
+```json
+[
+  {
+    "id": 91,
+    "symbol": "BTC",
+    "threshold": 3,
+    "eventAt": "2026-06-29T12:00:00.000Z",
+    "crossedThresholdCount": 1
+  }
+]
+```
+
 ## MEXC Sync
 
 - The backend runs one immediate MEXC sync on startup.
@@ -80,6 +95,8 @@ Possible `mexcSyncStatus` values:
 - Manual card prices and MEXC futures price are stored separately.
 - A saved symbol like `BTC` maps to the exact MEXC USDT futures contract `BTC_USDT`.
 - The synced MEXC value is the futures ticker field `lastPrice`.
+- The synced 24h volume is stored separately as `mexcVolume24h`.
+- Threshold breakout history is tracked for exact ratio levels `2..10` and kept for the last 30 days.
 - Public MEXC futures contract endpoints are used in v1.
 
 All MEXC requests must go through the centralized client in `backend/src/integrations/mexc/`.

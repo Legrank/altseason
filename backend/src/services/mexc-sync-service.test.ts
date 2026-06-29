@@ -3,6 +3,7 @@ import { existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 
 import { CardRepository } from '../repository.js'
@@ -42,6 +43,180 @@ test('syncs all tracked symbols from one snapshot', async (t) => {
   assert.equal(cards.find((card) => card.symbol === 'ETH')?.mexcPrice, 3400.2)
   assert.equal(cards.find((card) => card.symbol === 'ETH')?.mexcAmount24h, 2200)
   assert.equal(cards.every((card) => card.mexcSyncStatus === 'synced'), true)
+})
+
+test('creates one event when ratio crosses a threshold upward', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 190, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 220 }]])
+      }
+    },
+    now: () => new Date('2026-06-29T12:00:00.000Z')
+  })
+
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [
+    {
+      id: 1,
+      symbol: 'BTC',
+      threshold: 2,
+      eventAt: '2026-06-29T12:00:00.000Z',
+      crossedThresholdCount: 1
+    }
+  ])
+  assert.deepEqual(repository.listRatioThresholdEvents(3), [])
+})
+
+test('does not create an event when ratio stays above the threshold', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 230, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 260 }]])
+      }
+    },
+    now: () => new Date('2026-06-29T12:00:00.000Z')
+  })
+
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [])
+})
+
+test('creates another event after ratio drops back below a threshold and crosses it again', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 180, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  let amount24 = 240
+  let now = new Date('2026-06-29T12:00:00.000Z')
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24 }]])
+      }
+    },
+    now: () => now
+  })
+
+  await service.syncNow()
+  amount24 = 150
+  now = new Date('2026-06-29T12:05:00.000Z')
+  await service.syncNow()
+  amount24 = 230
+  now = new Date('2026-06-29T12:10:00.000Z')
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [
+    {
+      id: 2,
+      symbol: 'BTC',
+      threshold: 2,
+      eventAt: '2026-06-29T12:10:00.000Z',
+      crossedThresholdCount: 1
+    },
+    {
+      id: 1,
+      symbol: 'BTC',
+      threshold: 2,
+      eventAt: '2026-06-29T12:00:00.000Z',
+      crossedThresholdCount: 1
+    }
+  ])
+})
+
+test('creates one event per crossed threshold and marks large jumps', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 180, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 420 }]])
+      }
+    },
+    now: () => new Date('2026-06-29T12:00:00.000Z')
+  })
+
+  await service.syncNow()
+
+  for (const threshold of [2, 3, 4] as const) {
+    assert.deepEqual(repository.listRatioThresholdEvents(threshold), [
+      {
+        id: threshold - 1,
+        symbol: 'BTC',
+        threshold,
+        eventAt: '2026-06-29T12:00:00.000Z',
+        crossedThresholdCount: 3
+      }
+    ])
+  }
+
+  assert.deepEqual(repository.listRatioThresholdEvents(5), [])
+})
+
+test('does not create events when there is no previous ratio yet', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 220 }]])
+      }
+    },
+    now: () => new Date('2026-06-29T12:00:00.000Z')
+  })
+
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [])
 })
 
 test('marks symbols as not found when snapshot lacks their USDT pair', async (t) => {
@@ -167,6 +342,52 @@ test('does not roll daily amounts more than once on the same UTC day', async (t)
 
   assert.deepEqual(updated?.mexcDailyAmounts3m, [300, 200, 100])
   assert.equal(updated?.mexcDailyAmountsUtcDate, '2026-06-24')
+})
+
+test('deletes ratio threshold events older than 30 days during sync', async (t) => {
+  const databasePath = join(tmpdir(), `altseason-ratio-events-retention-${Date.now()}.sqlite`)
+  const seededRepository = new CardRepository(databasePath)
+
+  seededRepository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 150, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+  seededRepository.close()
+
+  const seededDatabase = new DatabaseSync(databasePath)
+  seededDatabase
+    .prepare(`
+      INSERT INTO ratio_threshold_events (symbol, threshold, event_at, crossed_threshold_count)
+      VALUES (?, ?, ?, ?)
+    `)
+    .run('BTC', 2, '2026-05-20T12:00:00.000Z', 1)
+  seededDatabase.close()
+
+  const repository = new CardRepository(databasePath)
+
+  t.after(() => {
+    repository.close()
+
+    for (const path of [`${databasePath}-shm`, `${databasePath}-wal`, databasePath]) {
+      if (existsSync(path)) {
+        unlinkSync(path)
+      }
+    }
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 160 }]])
+      }
+    },
+    now: () => new Date('2026-06-29T12:00:00.000Z')
+  })
+
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [])
 })
 
 test('syncs 1000 cards in one batch without degrading sharply', async (t) => {
