@@ -97,6 +97,8 @@ Possible `mexcSyncStatus` values:
 - The synced MEXC value is the futures ticker field `lastPrice`.
 - The synced 24h volume is stored separately as `mexcVolume24h`.
 - Threshold breakout history is tracked for exact ratio levels `2..10` and kept for the last 30 days.
+- A breakout is logged only when `mexcVolume24h` is above the selected ratio threshold versus the 3-month average and is at least `2x` the latest completed daily volume.
+- The same `symbol + threshold` is logged at most once per UTC day.
 - Public MEXC futures contract endpoints are used in v1.
 
 All MEXC requests must go through the centralized client in `backend/src/integrations/mexc/`.

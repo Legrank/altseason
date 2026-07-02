@@ -306,6 +306,16 @@ export class CardRepository {
 
         const nextRatio = this.calculateRatio(marketSnapshot.amount24, nextDailyAmounts.values)
         const crossedThresholds = this.detectCrossedThresholds(previousRatio, nextRatio)
+        const eligibleThresholds = this.filterThresholdsByPreviousDayVolume(
+          crossedThresholds,
+          marketSnapshot.amount24,
+          this.getLatestCompletedDailyAmount(nextDailyAmounts.values)
+        )
+        const thresholdsToInsert = this.filterLoggedThresholdsForUtcDay(
+          card.symbol,
+          eligibleThresholds,
+          utcDate
+        )
 
         updateSyncedStatement.run(
           marketSnapshot.lastPrice,
@@ -316,8 +326,8 @@ export class CardRepository {
           card.id
         )
 
-        if (crossedThresholds.length > 0) {
-          this.insertRatioThresholdEvents(card.symbol, crossedThresholds, updatedAt)
+        if (thresholdsToInsert.length > 0) {
+          this.insertRatioThresholdEvents(card.symbol, thresholdsToInsert, updatedAt)
         }
       }
 
@@ -622,6 +632,14 @@ export class CardRepository {
       .run(cutoffDate.toISOString())
   }
 
+  private getLatestCompletedDailyAmount(dailyAmounts: number[] | null): number | null {
+    const latestCompletedDailyAmount = dailyAmounts?.[0]
+
+    return typeof latestCompletedDailyAmount === 'number' && Number.isFinite(latestCompletedDailyAmount)
+      ? latestCompletedDailyAmount
+      : null
+  }
+
   private calculateRatio(amount24: number | null, dailyAmounts: number[] | null): number | null {
     if (typeof amount24 !== 'number' || !Number.isFinite(amount24)) {
       return null
@@ -642,6 +660,47 @@ export class CardRepository {
     }
 
     return RATIO_EVENT_THRESHOLDS.filter((threshold) => previousRatio <= threshold && nextRatio > threshold)
+  }
+
+  private filterThresholdsByPreviousDayVolume(
+    thresholds: number[],
+    amount24: number | null,
+    latestCompletedDailyAmount: number | null
+  ): number[] {
+    if (typeof amount24 !== 'number' || !Number.isFinite(amount24)) {
+      return []
+    }
+
+    if (
+      typeof latestCompletedDailyAmount !== 'number' ||
+      !Number.isFinite(latestCompletedDailyAmount) ||
+      latestCompletedDailyAmount <= 0
+    ) {
+      return []
+    }
+
+    return amount24 >= latestCompletedDailyAmount * 2 ? thresholds : []
+  }
+
+  private filterLoggedThresholdsForUtcDay(symbol: string, thresholds: number[], utcDate: string): number[] {
+    if (thresholds.length === 0) {
+      return thresholds
+    }
+
+    const dayStart = new Date(`${utcDate}T00:00:00.000Z`)
+    const nextDayStart = new Date(dayStart)
+    nextDayStart.setUTCDate(nextDayStart.getUTCDate() + 1)
+    const statement = this.db.prepare(`
+      SELECT 1
+      FROM ratio_threshold_events
+      WHERE symbol = ? AND threshold = ? AND event_at >= ? AND event_at < ?
+      LIMIT 1
+    `)
+
+    return thresholds.filter(
+      (threshold) =>
+        statement.get(symbol, threshold, dayStart.toISOString(), nextDayStart.toISOString()) === undefined
+    )
   }
 
   private withTransaction<T>(callback: () => T): T {

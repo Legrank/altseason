@@ -80,6 +80,32 @@ test('creates one event when ratio crosses a threshold upward', async (t) => {
   assert.deepEqual(repository.listRatioThresholdEvents(3), [])
 })
 
+test('does not create an event when amount24 is less than twice the latest completed daily volume', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 190, mexcDailyAmounts3m: [150, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 260 }]])
+      }
+    },
+    now: () => new Date('2026-06-29T12:00:00.000Z')
+  })
+
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [])
+})
+
 test('does not create an event when ratio stays above the threshold', async (t) => {
   const repository = new CardRepository(':memory:')
   repository.create(
@@ -106,7 +132,7 @@ test('does not create an event when ratio stays above the threshold', async (t) 
   assert.deepEqual(repository.listRatioThresholdEvents(2), [])
 })
 
-test('creates another event after ratio drops back below a threshold and crosses it again', async (t) => {
+test('does not create a second event for the same symbol and threshold on the same UTC day', async (t) => {
   const repository = new CardRepository(':memory:')
   repository.create(
     { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
@@ -139,11 +165,56 @@ test('creates another event after ratio drops back below a threshold and crosses
 
   assert.deepEqual(repository.listRatioThresholdEvents(2), [
     {
+      id: 1,
+      symbol: 'BTC',
+      threshold: 2,
+      eventAt: '2026-06-29T12:00:00.000Z',
+      crossedThresholdCount: 1
+    }
+  ])
+})
+
+test('creates another event on a later UTC day after ratio drops back below a threshold and crosses it again', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 180, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+
+  t.after(() => {
+    repository.close()
+  })
+
+  let amount24 = 240
+  let now = new Date('2026-06-29T12:00:00.000Z')
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice: 62000.1, amount24 }]])
+      }
+    },
+    now: () => now
+  })
+
+  await service.syncNow()
+  amount24 = 150
+  now = new Date('2026-06-29T12:05:00.000Z')
+  await service.syncNow()
+  amount24 = 180
+  now = new Date('2026-06-30T00:05:00.000Z')
+  await service.syncNow()
+  amount24 = 420
+  now = new Date('2026-06-30T12:00:00.000Z')
+  await service.syncNow()
+
+  assert.deepEqual(repository.listRatioThresholdEvents(2), [
+    {
       id: 2,
       symbol: 'BTC',
       threshold: 2,
-      eventAt: '2026-06-29T12:10:00.000Z',
-      crossedThresholdCount: 1
+      eventAt: '2026-06-30T12:00:00.000Z',
+      crossedThresholdCount: 3
     },
     {
       id: 1,

@@ -65,7 +65,12 @@ Rules adopted in this project:
   - `mexcAmount24h`
   - `mexcPriceUpdatedAt`
   - `mexcSyncStatus = 'synced'`
-- During a successful sync, the backend also evaluates ratio breakouts against thresholds `2..10` and records upward crossing events for the last 30 days only.
+- During a successful sync, the backend also evaluates ratio breakouts against thresholds `2..10`.
+- A breakout event is recorded only when:
+  - the ratio crosses upward for the exact threshold
+  - the current `amount24` is at least `2x` the latest completed daily volume stored in history
+  - the same `symbol + threshold` has not already been recorded earlier in the same UTC day
+- Breakout history is kept for the last 30 days only.
 - If `${symbol}_USDT` is missing from the MEXC futures snapshot:
   - `mexcPrice = null`
   - `mexcAmount24h = null`
