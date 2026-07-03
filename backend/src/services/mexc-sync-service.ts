@@ -10,6 +10,7 @@ interface MexcSyncServiceOptions {
   mexcClient: FuturesPriceProvider
   intervalMs?: number
   now?: () => Date
+  onSyncCompleted?: () => Promise<void> | void
 }
 
 export class MexcSyncService {
@@ -17,6 +18,7 @@ export class MexcSyncService {
   private readonly mexcClient: FuturesPriceProvider
   private readonly intervalMs: number
   private readonly now: () => Date
+  private readonly onSyncCompleted?: () => Promise<void> | void
   private timer: NodeJS.Timeout | null = null
   private inProgress = false
 
@@ -25,6 +27,7 @@ export class MexcSyncService {
     this.mexcClient = options.mexcClient
     this.intervalMs = options.intervalMs ?? 5 * 60 * 1000
     this.now = options.now ?? (() => new Date())
+    this.onSyncCompleted = options.onSyncCompleted
   }
 
   start(): void {
@@ -66,6 +69,11 @@ export class MexcSyncService {
       const updatedAt = now.toISOString()
       const utcDate = updatedAt.slice(0, 10)
       this.repository.applyMexcSnapshot(snapshot, updatedAt, utcDate)
+      try {
+        await this.onSyncCompleted?.()
+      } catch {
+        // Telegram delivery must not affect market sync state.
+      }
     } catch (error) {
       if (error instanceof MexcClientError) {
         this.repository.markPendingMexcSyncError()

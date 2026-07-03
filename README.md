@@ -29,6 +29,44 @@ Single-user MVP for managing crypto cards with manual pricing and live MEXC USDT
 
 4. Open `http://localhost:5173`
 
+## Telegram Bot
+
+The backend can run a Telegram bot that sends private notifications when a `ratio` level is crossed.
+
+1. Create `backend/.env.local` from `backend/.env.example`.
+2. Set:
+
+   ```env
+   TELEGRAM_BOT_TOKEN=...
+   TELEGRAM_ALLOWED_USER_IDS=123456789
+   TELEGRAM_ALLOWED_USERNAMES=your_username
+   TELEGRAM_DEFAULT_MIN_THRESHOLD=3
+   ```
+
+3. Restart the backend.
+
+Security notes:
+
+- The bot starts only when `TELEGRAM_BOT_TOKEN` is set.
+- Access is restricted to users listed in `TELEGRAM_ALLOWED_USER_IDS` or `TELEGRAM_ALLOWED_USERNAMES`.
+- Only private chats are supported.
+
+Bot commands:
+
+- `/start` enables notifications for the current private chat.
+- `/threshold 4` sets the minimum `ratio` level that should trigger messages.
+- `/status` shows the current subscription threshold.
+- `/stop` disables notifications.
+- `/help` shows the command list.
+
+Telegram notifications include:
+
+- `ratio` breakout events for thresholds `>=` the subscriber's configured minimum.
+- Price crossing `buyPriceSafe` upward.
+- Price crossing `buyPriceRisk` upward.
+- Price crossing `sellPrice` downward.
+- The same card-level price-crossing event is sent at most once per UTC day.
+
 ## Cards API
 
 - `GET /api/cards`
@@ -99,6 +137,8 @@ Possible `mexcSyncStatus` values:
 - Threshold breakout history is tracked for exact ratio levels `2..10` and kept for the last 30 days.
 - A breakout is logged only when `mexcVolume24h` is above the selected ratio threshold versus the 3-month average and is at least `2x` the latest completed daily volume.
 - The same `symbol + threshold` is logged at most once per UTC day.
+- Telegram subscribers receive only events with `threshold >= their configured minimum`.
+- Price-level crossing history is tracked for `buyPriceSafe` up, `buyPriceRisk` up, and `sellPrice` down, with one identical event per card per UTC day.
 - Public MEXC futures contract endpoints are used in v1.
 
 All MEXC requests must go through the centralized client in `backend/src/integrations/mexc/`.

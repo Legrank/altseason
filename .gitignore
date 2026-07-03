@@ -5,3 +5,7 @@ coverage/
 backend/data/
 *.tsbuildinfo
 *.log
+.env
+.env.local
+backend/.env
+backend/.env.local

@@ -80,6 +80,178 @@ test('creates one event when ratio crosses a threshold upward', async (t) => {
   assert.deepEqual(repository.listRatioThresholdEvents(3), [])
 })
 
+test('creates price-level events when price crosses buy levels upward and sell level downward', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: 110,
+    buyPriceRisk: 120,
+    sellPrice: 90
+  })
+  repository.applyMexcPrice('BTC', 100, '2026-06-29T11:55:00.000Z', { utcDate: '2026-06-29' })
+
+  t.after(() => {
+    repository.close()
+  })
+
+  let lastPrice = 125
+  let now = new Date('2026-06-29T12:00:00.000Z')
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice, amount24: 500 }]])
+      }
+    },
+    now: () => now
+  })
+
+  await service.syncNow()
+
+  lastPrice = 85
+  now = new Date('2026-06-29T12:05:00.000Z')
+  await service.syncNow()
+
+  assert.deepEqual(repository.listPriceLevelEventsSince(0), [
+    {
+      id: 1,
+      cardId: 1,
+      symbol: 'BTC',
+      kind: 'buyPriceSafe',
+      direction: 'up',
+      triggerPrice: 110,
+      marketPrice: 125,
+      eventAt: '2026-06-29T12:00:00.000Z'
+    },
+    {
+      id: 2,
+      cardId: 1,
+      symbol: 'BTC',
+      kind: 'buyPriceRisk',
+      direction: 'up',
+      triggerPrice: 120,
+      marketPrice: 125,
+      eventAt: '2026-06-29T12:00:00.000Z'
+    },
+    {
+      id: 3,
+      cardId: 1,
+      symbol: 'BTC',
+      kind: 'sellPrice',
+      direction: 'down',
+      triggerPrice: 90,
+      marketPrice: 85,
+      eventAt: '2026-06-29T12:05:00.000Z'
+    }
+  ])
+})
+
+test('does not create duplicate price-level events for the same card and level on the same UTC day', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: 110,
+    buyPriceRisk: null,
+    sellPrice: null
+  })
+  repository.applyMexcPrice('BTC', 100, '2026-06-29T11:55:00.000Z', { utcDate: '2026-06-29' })
+
+  t.after(() => {
+    repository.close()
+  })
+
+  let lastPrice = 115
+  let now = new Date('2026-06-29T12:00:00.000Z')
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice, amount24: 500 }]])
+      }
+    },
+    now: () => now
+  })
+
+  await service.syncNow()
+  lastPrice = 100
+  now = new Date('2026-06-29T12:05:00.000Z')
+  await service.syncNow()
+  lastPrice = 111
+  now = new Date('2026-06-29T12:10:00.000Z')
+  await service.syncNow()
+
+  assert.deepEqual(repository.listPriceLevelEventsSince(0), [
+    {
+      id: 1,
+      cardId: 1,
+      symbol: 'BTC',
+      kind: 'buyPriceSafe',
+      direction: 'up',
+      triggerPrice: 110,
+      marketPrice: 115,
+      eventAt: '2026-06-29T12:00:00.000Z'
+    }
+  ])
+})
+
+test('creates a repeated price-level event on a later UTC day after recrossing the same level', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: null,
+    buyPriceRisk: null,
+    sellPrice: 90
+  })
+  repository.applyMexcPrice('BTC', 95, '2026-06-29T11:55:00.000Z', { utcDate: '2026-06-29' })
+
+  t.after(() => {
+    repository.close()
+  })
+
+  let lastPrice = 85
+  let now = new Date('2026-06-29T12:00:00.000Z')
+  const service = new MexcSyncService({
+    repository,
+    mexcClient: {
+      async getAllUsdtFuturesPrices() {
+        return new Map([['BTC_USDT', { lastPrice, amount24: 500 }]])
+      }
+    },
+    now: () => now
+  })
+
+  await service.syncNow()
+  lastPrice = 95
+  now = new Date('2026-06-30T00:05:00.000Z')
+  await service.syncNow()
+  lastPrice = 88
+  now = new Date('2026-06-30T12:00:00.000Z')
+  await service.syncNow()
+
+  assert.deepEqual(repository.listPriceLevelEventsSince(0), [
+    {
+      id: 1,
+      cardId: 1,
+      symbol: 'BTC',
+      kind: 'sellPrice',
+      direction: 'down',
+      triggerPrice: 90,
+      marketPrice: 85,
+      eventAt: '2026-06-29T12:00:00.000Z'
+    },
+    {
+      id: 2,
+      cardId: 1,
+      symbol: 'BTC',
+      kind: 'sellPrice',
+      direction: 'down',
+      triggerPrice: 90,
+      marketPrice: 88,
+      eventAt: '2026-06-30T12:00:00.000Z'
+    }
+  ])
+})
+
 test('does not create an event when amount24 is less than twice the latest completed daily volume', async (t) => {
   const repository = new CardRepository(':memory:')
   repository.create(

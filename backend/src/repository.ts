@@ -3,10 +3,20 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { calculateRobustAverage } from './services/robust-average.js'
-import type { CardPayload, MexcSyncStatus, RatioThresholdEvent, StoredCard } from './types.js'
+import type {
+  CardPayload,
+  MexcSyncStatus,
+  PriceLevelEvent,
+  PriceLevelEventDirection,
+  PriceLevelEventKind,
+  RatioThresholdEvent,
+  StoredCard,
+  TelegramSubscriber
+} from './types.js'
 
 const RATIO_EVENT_THRESHOLDS = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 const RATIO_EVENT_RETENTION_DAYS = 30
+const PRICE_LEVEL_EVENT_RETENTION_DAYS = 30
 
 interface CardRow {
   id: number
@@ -26,6 +36,10 @@ interface CardRow {
 interface MexcSyncCardRow {
   id: number
   symbol: string
+  buy_price_safe: number | null
+  buy_price_risk: number | null
+  sell_price: number | null
+  mexc_price: number | null
   mexc_amount_24h: number | null
   mexc_daily_amounts_3m: string | null
   mexc_daily_amounts_utc_date: string | null
@@ -37,6 +51,30 @@ interface RatioThresholdEventRow {
   threshold: number
   event_at: string
   crossed_threshold_count: number
+}
+
+interface TelegramSubscriberRow {
+  chat_id: string
+  user_id: string
+  username: string | null
+  first_name: string | null
+  min_threshold: number
+  is_active: number
+  created_at: string
+  updated_at: string
+  last_notified_event_id: number | null
+  last_notified_price_event_id: number | null
+}
+
+interface PriceLevelEventRow {
+  id: number
+  card_id: number
+  symbol: string
+  kind: PriceLevelEventKind
+  direction: PriceLevelEventDirection
+  trigger_price: number
+  market_price: number
+  event_at: string
 }
 
 interface ColumnInfoRow {
@@ -220,6 +258,187 @@ export class CardRepository {
     }))
   }
 
+  listRatioThresholdEventsSince(afterId: number): RatioThresholdEvent[] {
+    const statement = this.db.prepare(`
+      SELECT id, symbol, threshold, event_at, crossed_threshold_count
+      FROM ratio_threshold_events
+      WHERE id > ?
+      ORDER BY id ASC
+    `)
+
+    return (statement.all(afterId) as unknown as RatioThresholdEventRow[]).map((row) => ({
+      id: row.id,
+      symbol: row.symbol,
+      threshold: row.threshold,
+      eventAt: row.event_at,
+      crossedThresholdCount: row.crossed_threshold_count
+    }))
+  }
+
+  getLatestRatioThresholdEventId(): number {
+    const row = this.db
+      .prepare(`
+        SELECT COALESCE(MAX(id), 0) AS id
+        FROM ratio_threshold_events
+      `)
+      .get() as { id: number } | undefined
+
+    return row?.id ?? 0
+  }
+
+  listPriceLevelEventsSince(afterId: number): PriceLevelEvent[] {
+    const statement = this.db.prepare(`
+      SELECT id, card_id, symbol, kind, direction, trigger_price, market_price, event_at
+      FROM price_level_events
+      WHERE id > ?
+      ORDER BY id ASC
+    `)
+
+    return (statement.all(afterId) as unknown as PriceLevelEventRow[]).map((row) =>
+      this.mapPriceLevelEventRow(row)
+    )
+  }
+
+  getLatestPriceLevelEventId(): number {
+    const row = this.db
+      .prepare(`
+        SELECT COALESCE(MAX(id), 0) AS id
+        FROM price_level_events
+      `)
+      .get() as { id: number } | undefined
+
+    return row?.id ?? 0
+  }
+
+  getTelegramSubscriber(chatId: string): TelegramSubscriber | null {
+    const row = this.db
+      .prepare(`
+        SELECT chat_id, user_id, username, first_name, min_threshold, is_active, created_at, updated_at, last_notified_event_id, last_notified_price_event_id
+        FROM telegram_subscribers
+        WHERE chat_id = ?
+      `)
+      .get(chatId) as TelegramSubscriberRow | undefined
+
+    return row ? this.mapTelegramSubscriberRow(row) : null
+  }
+
+  listActiveTelegramSubscribers(): TelegramSubscriber[] {
+    const statement = this.db.prepare(`
+      SELECT chat_id, user_id, username, first_name, min_threshold, is_active, created_at, updated_at, last_notified_event_id, last_notified_price_event_id
+      FROM telegram_subscribers
+      WHERE is_active = 1
+      ORDER BY created_at ASC, chat_id ASC
+    `)
+
+    return (statement.all() as unknown as TelegramSubscriberRow[]).map((row) =>
+      this.mapTelegramSubscriberRow(row)
+    )
+  }
+
+  upsertTelegramSubscriber(input: {
+    chatId: string
+    userId: string
+    username: string | null
+    firstName: string | null
+    defaultMinThreshold: number
+    currentEventId: number
+    currentPriceEventId: number
+  }): TelegramSubscriber {
+    const existing = this.getTelegramSubscriber(input.chatId)
+    const timestamp = new Date().toISOString()
+
+    this.db
+      .prepare(`
+        INSERT INTO telegram_subscribers (
+          chat_id,
+          user_id,
+          username,
+          first_name,
+          min_threshold,
+          is_active,
+          created_at,
+          updated_at,
+          last_notified_event_id,
+          last_notified_price_event_id
+        )
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+          user_id = excluded.user_id,
+          username = excluded.username,
+          first_name = excluded.first_name,
+          is_active = 1,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        input.chatId,
+        input.userId,
+        input.username,
+        input.firstName,
+        existing?.minThreshold ?? input.defaultMinThreshold,
+        existing?.createdAt ?? timestamp,
+        timestamp,
+        existing?.lastNotifiedEventId ?? input.currentEventId,
+        existing?.lastNotifiedPriceEventId ?? input.currentPriceEventId
+      )
+
+    return this.getTelegramSubscriber(input.chatId) as TelegramSubscriber
+  }
+
+  setTelegramSubscriberThreshold(chatId: string, minThreshold: number): TelegramSubscriber | null {
+    const timestamp = new Date().toISOString()
+    const result = this.db
+      .prepare(`
+        UPDATE telegram_subscribers
+        SET min_threshold = ?, is_active = 1, updated_at = ?
+        WHERE chat_id = ?
+      `)
+      .run(minThreshold, timestamp, chatId)
+
+    return result.changes > 0 ? this.getTelegramSubscriber(chatId) : null
+  }
+
+  setTelegramSubscriberActive(chatId: string, isActive: boolean): TelegramSubscriber | null {
+    const timestamp = new Date().toISOString()
+    const result = this.db
+      .prepare(`
+        UPDATE telegram_subscribers
+        SET is_active = ?, updated_at = ?
+        WHERE chat_id = ?
+      `)
+      .run(isActive ? 1 : 0, timestamp, chatId)
+
+    return result.changes > 0 ? this.getTelegramSubscriber(chatId) : null
+  }
+
+  setTelegramSubscriberLastNotifiedEventId(chatId: string, lastNotifiedEventId: number): TelegramSubscriber | null {
+    const timestamp = new Date().toISOString()
+    const result = this.db
+      .prepare(`
+        UPDATE telegram_subscribers
+        SET last_notified_event_id = ?, updated_at = ?
+        WHERE chat_id = ?
+      `)
+      .run(lastNotifiedEventId, timestamp, chatId)
+
+    return result.changes > 0 ? this.getTelegramSubscriber(chatId) : null
+  }
+
+  setTelegramSubscriberLastNotifiedPriceEventId(
+    chatId: string,
+    lastNotifiedPriceEventId: number
+  ): TelegramSubscriber | null {
+    const timestamp = new Date().toISOString()
+    const result = this.db
+      .prepare(`
+        UPDATE telegram_subscribers
+        SET last_notified_price_event_id = ?, updated_at = ?
+        WHERE chat_id = ?
+      `)
+      .run(lastNotifiedPriceEventId, timestamp, chatId)
+
+    return result.changes > 0 ? this.getTelegramSubscriber(chatId) : null
+  }
+
   applyMexcPrice(
     symbol: string,
     mexcPrice: number,
@@ -234,6 +453,13 @@ export class CardRepository {
 
     this.withTransaction(() => {
       this.applySyncedMexcRows(cards, mexcPrice, updatedAt, options)
+      const utcDate = options?.utcDate ?? updatedAt.slice(0, 10)
+
+      for (const card of cards) {
+        this.insertPriceLevelEventsForCard(card, mexcPrice, updatedAt, utcDate)
+      }
+
+      this.deleteExpiredPriceLevelEvents(updatedAt)
     })
   }
 
@@ -316,6 +542,7 @@ export class CardRepository {
           eligibleThresholds,
           utcDate
         )
+        const priceLevelEventsToInsert = this.detectPriceLevelEvents(card, marketSnapshot.lastPrice, utcDate)
 
         updateSyncedStatement.run(
           marketSnapshot.lastPrice,
@@ -329,9 +556,14 @@ export class CardRepository {
         if (thresholdsToInsert.length > 0) {
           this.insertRatioThresholdEvents(card.symbol, thresholdsToInsert, updatedAt)
         }
+
+        if (priceLevelEventsToInsert.length > 0) {
+          this.insertPriceLevelEvents(card, priceLevelEventsToInsert, marketSnapshot.lastPrice, updatedAt)
+        }
       }
 
       this.deleteExpiredRatioThresholdEvents(updatedAt)
+      this.deleteExpiredPriceLevelEvents(updatedAt)
     })
   }
 
@@ -374,7 +606,36 @@ export class CardRepository {
       )
     `)
 
-    const columns = this.readColumns()
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS telegram_subscribers (
+        chat_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        username TEXT NULL,
+        first_name TEXT NULL,
+        min_threshold INTEGER NOT NULL DEFAULT 2,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_notified_event_id INTEGER NULL,
+        last_notified_price_event_id INTEGER NULL
+      )
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS price_level_events (
+        id INTEGER PRIMARY KEY,
+        card_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        trigger_price REAL NOT NULL,
+        market_price REAL NOT NULL,
+        event_at TEXT NOT NULL
+      )
+    `)
+
+    const columns = this.readTableColumns('cards')
+    const telegramSubscriberColumns = this.readTableColumns('telegram_subscribers')
 
     if (columns.has('price')) {
       this.rebuildCardsSchema(columns)
@@ -426,6 +687,10 @@ export class CardRepository {
       this.db.exec('ALTER TABLE cards ADD COLUMN sell_price REAL NULL')
     }
 
+    if (!telegramSubscriberColumns.has('last_notified_price_event_id')) {
+      this.db.exec('ALTER TABLE telegram_subscribers ADD COLUMN last_notified_price_event_id INTEGER NULL')
+    }
+
     this.db.exec(`
       UPDATE cards
       SET mexc_sync_status = 'pending'
@@ -439,6 +704,9 @@ export class CardRepository {
       CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_event_at ON ratio_threshold_events (event_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_threshold_event_at ON ratio_threshold_events (threshold, event_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_symbol_event_at ON ratio_threshold_events (symbol, event_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_price_level_events_event_at ON price_level_events (event_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_price_level_events_card_kind_day ON price_level_events (card_id, kind, direction, event_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_telegram_subscribers_is_active ON telegram_subscribers (is_active, chat_id);
     `)
   }
 
@@ -450,8 +718,8 @@ export class CardRepository {
     }
   }
 
-  private readColumns(): Map<string, ColumnInfoRow> {
-    const columnInfo = this.db.prepare('PRAGMA table_info(cards)')
+  private readTableColumns(tableName: string): Map<string, ColumnInfoRow> {
+    const columnInfo = this.db.prepare(`PRAGMA table_info(${tableName})`)
     const rows = columnInfo.all() as unknown as ColumnInfoRow[]
 
     return new Map(rows.map((column) => [column.name, column]))
@@ -552,10 +820,38 @@ export class CardRepository {
     }
   }
 
+  private mapTelegramSubscriberRow(row: TelegramSubscriberRow): TelegramSubscriber {
+    return {
+      chatId: row.chat_id,
+      userId: row.user_id,
+      username: row.username,
+      firstName: row.first_name,
+      minThreshold: row.min_threshold,
+      isActive: row.is_active === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastNotifiedEventId: row.last_notified_event_id,
+      lastNotifiedPriceEventId: row.last_notified_price_event_id
+    }
+  }
+
+  private mapPriceLevelEventRow(row: PriceLevelEventRow): PriceLevelEvent {
+    return {
+      id: row.id,
+      cardId: row.card_id,
+      symbol: row.symbol,
+      kind: row.kind,
+      direction: row.direction,
+      triggerPrice: row.trigger_price,
+      marketPrice: row.market_price,
+      eventAt: row.event_at
+    }
+  }
+
   private getCardsForMexcSync(symbol?: string): MexcSyncCardRow[] {
     if (symbol) {
       const statement = this.db.prepare(`
-        SELECT id, symbol, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+        SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
         FROM cards
         WHERE symbol = ?
       `)
@@ -564,7 +860,7 @@ export class CardRepository {
     }
 
     const statement = this.db.prepare(`
-      SELECT id, symbol, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
       FROM cards
     `)
 
@@ -620,6 +916,35 @@ export class CardRepository {
     }
   }
 
+  private insertPriceLevelEvents(
+    card: MexcSyncCardRow,
+    events: Array<{ kind: PriceLevelEventKind; direction: PriceLevelEventDirection; triggerPrice: number }>,
+    marketPrice: number,
+    eventAt: string
+  ): void {
+    const statement = this.db.prepare(`
+      INSERT INTO price_level_events (card_id, symbol, kind, direction, trigger_price, market_price, event_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    for (const event of events) {
+      statement.run(card.id, card.symbol, event.kind, event.direction, event.triggerPrice, marketPrice, eventAt)
+    }
+  }
+
+  private insertPriceLevelEventsForCard(
+    card: MexcSyncCardRow,
+    marketPrice: number,
+    eventAt: string,
+    utcDate: string
+  ): void {
+    const events = this.detectPriceLevelEvents(card, marketPrice, utcDate)
+
+    if (events.length > 0) {
+      this.insertPriceLevelEvents(card, events, marketPrice, eventAt)
+    }
+  }
+
   private deleteExpiredRatioThresholdEvents(referenceTimestamp: string): void {
     const cutoffDate = new Date(referenceTimestamp)
     cutoffDate.setUTCDate(cutoffDate.getUTCDate() - RATIO_EVENT_RETENTION_DAYS)
@@ -627,6 +952,18 @@ export class CardRepository {
     this.db
       .prepare(`
         DELETE FROM ratio_threshold_events
+        WHERE event_at < ?
+      `)
+      .run(cutoffDate.toISOString())
+  }
+
+  private deleteExpiredPriceLevelEvents(referenceTimestamp: string): void {
+    const cutoffDate = new Date(referenceTimestamp)
+    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - PRICE_LEVEL_EVENT_RETENTION_DAYS)
+
+    this.db
+      .prepare(`
+        DELETE FROM price_level_events
         WHERE event_at < ?
       `)
       .run(cutoffDate.toISOString())
@@ -682,6 +1019,66 @@ export class CardRepository {
     return amount24 >= latestCompletedDailyAmount * 2 ? thresholds : []
   }
 
+  private detectPriceLevelEvents(
+    card: MexcSyncCardRow,
+    nextPrice: number,
+    utcDate: string
+  ): Array<{ kind: PriceLevelEventKind; direction: PriceLevelEventDirection; triggerPrice: number }> {
+    const previousPrice = card.mexc_price
+
+    if (typeof previousPrice !== 'number' || !Number.isFinite(previousPrice)) {
+      return []
+    }
+
+    const candidates = [
+      {
+        kind: 'buyPriceSafe' as const,
+        direction: 'up' as const,
+        triggerPrice: card.buy_price_safe
+      },
+      {
+        kind: 'buyPriceRisk' as const,
+        direction: 'up' as const,
+        triggerPrice: card.buy_price_risk
+      },
+      {
+        kind: 'sellPrice' as const,
+        direction: 'down' as const,
+        triggerPrice: card.sell_price
+      }
+    ]
+
+    const events: Array<{
+      kind: PriceLevelEventKind
+      direction: PriceLevelEventDirection
+      triggerPrice: number
+    }> = []
+
+    for (const candidate of candidates) {
+      if (typeof candidate.triggerPrice !== 'number' || !Number.isFinite(candidate.triggerPrice)) {
+        continue
+      }
+
+      const crossed =
+        candidate.direction === 'up'
+          ? previousPrice < candidate.triggerPrice && nextPrice >= candidate.triggerPrice
+          : previousPrice > candidate.triggerPrice && nextPrice <= candidate.triggerPrice
+
+      if (
+        crossed &&
+        !this.hasPriceLevelEventForUtcDay(card.id, candidate.kind, candidate.direction, utcDate)
+      ) {
+        events.push({
+          kind: candidate.kind,
+          direction: candidate.direction,
+          triggerPrice: candidate.triggerPrice
+        })
+      }
+    }
+
+    return events
+  }
+
   private filterLoggedThresholdsForUtcDay(symbol: string, thresholds: number[], utcDate: string): number[] {
     if (thresholds.length === 0) {
       return thresholds
@@ -701,6 +1098,27 @@ export class CardRepository {
       (threshold) =>
         statement.get(symbol, threshold, dayStart.toISOString(), nextDayStart.toISOString()) === undefined
     )
+  }
+
+  private hasPriceLevelEventForUtcDay(
+    cardId: number,
+    kind: PriceLevelEventKind,
+    direction: PriceLevelEventDirection,
+    utcDate: string
+  ): boolean {
+    const dayStart = new Date(`${utcDate}T00:00:00.000Z`)
+    const nextDayStart = new Date(dayStart)
+    nextDayStart.setUTCDate(nextDayStart.getUTCDate() + 1)
+    const row = this.db
+      .prepare(`
+        SELECT 1
+        FROM price_level_events
+        WHERE card_id = ? AND kind = ? AND direction = ? AND event_at >= ? AND event_at < ?
+        LIMIT 1
+      `)
+      .get(cardId, kind, direction, dayStart.toISOString(), nextDayStart.toISOString())
+
+    return row !== undefined
   }
 
   private withTransaction<T>(callback: () => T): T {

@@ -151,3 +151,57 @@ test('relaxes buy_price_safe to nullable for an existing cards table', () => {
   repository.close()
   unlinkSync(databasePath)
 })
+
+test('stores telegram subscriber settings and notification cursor', () => {
+  const repository = new CardRepository(':memory:')
+
+  repository.create(
+    { symbol: 'BTC', buyPriceSafe: 100, buyPriceRisk: null, sellPrice: null },
+    { mexcAmount24h: 190, mexcDailyAmounts3m: [100, 100, 100], mexcDailyAmountsUtcDate: '2026-06-29' }
+  )
+  repository.applyMexcSnapshot(
+    new Map([['BTC_USDT', { lastPrice: 62000.1, amount24: 240 }]]),
+    '2026-06-29T12:00:00.000Z',
+    '2026-06-29'
+  )
+
+  const created = repository.upsertTelegramSubscriber({
+    chatId: '101',
+    userId: '202',
+    username: 'trader',
+    firstName: 'Alt',
+    defaultMinThreshold: 3,
+    currentEventId: repository.getLatestRatioThresholdEventId(),
+    currentPriceEventId: repository.getLatestPriceLevelEventId()
+  })
+
+  assert.equal(created.chatId, '101')
+  assert.equal(created.minThreshold, 3)
+  assert.equal(created.isActive, true)
+  assert.equal(created.lastNotifiedEventId, 1)
+  assert.equal(created.lastNotifiedPriceEventId, 0)
+
+  const updatedThreshold = repository.setTelegramSubscriberThreshold('101', 5)
+  const paused = repository.setTelegramSubscriberActive('101', false)
+  const resumed = repository.upsertTelegramSubscriber({
+    chatId: '101',
+    userId: '202',
+    username: 'trader',
+    firstName: 'Alt',
+    defaultMinThreshold: 2,
+    currentEventId: repository.getLatestRatioThresholdEventId(),
+    currentPriceEventId: repository.getLatestPriceLevelEventId()
+  })
+  const movedCursor = repository.setTelegramSubscriberLastNotifiedEventId('101', 7)
+  const movedPriceCursor = repository.setTelegramSubscriberLastNotifiedPriceEventId('101', 9)
+
+  assert.equal(updatedThreshold?.minThreshold, 5)
+  assert.equal(paused?.isActive, false)
+  assert.equal(resumed.minThreshold, 5)
+  assert.equal(resumed.isActive, true)
+  assert.equal(movedCursor?.lastNotifiedEventId, 7)
+  assert.equal(movedPriceCursor?.lastNotifiedPriceEventId, 9)
+  assert.deepEqual(repository.listActiveTelegramSubscribers().map((subscriber) => subscriber.chatId), ['101'])
+
+  repository.close()
+})
