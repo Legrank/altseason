@@ -173,12 +173,6 @@ async function loadThresholdEvents(options?: { background?: boolean }) {
   }
 }
 
-function openCreateModal() {
-  modalErrorMessage.value = ''
-  modalState.open = true
-  modalState.card = null
-}
-
 function resetCardFilters() {
   cardFilters.withAnyManualPrice = false
   cardFilters.aboveBuyPriceSafe = false
@@ -216,30 +210,17 @@ async function submitCard(payload: {
   modalErrorMessage.value = ''
 
   try {
-    if (modalState.card) {
-      const updated = await cardsApi.update(modalState.card.id, payload)
-      cards.value = cards.value.map((card) => (card.id === updated.id ? updated : card))
-    } else {
-      const created = await cardsApi.create(payload)
-      cards.value = [created, ...cards.value]
+    if (!modalState.card) {
+      return
     }
 
+    const updated = await cardsApi.update(modalState.card.id, payload)
+    cards.value = cards.value.map((card) => (card.id === updated.id ? updated : card))
     closeModal()
   } catch (error) {
     modalErrorMessage.value = error instanceof Error ? error.message : 'Failed to save the card.'
   } finally {
     submitting.value = false
-  }
-}
-
-async function deleteCard(card: Card) {
-  errorMessage.value = ''
-
-  try {
-    await cardsApi.remove(card.id)
-    cards.value = cards.value.filter((item) => item.id !== card.id)
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Failed to delete the card.'
   }
 }
 
@@ -310,9 +291,6 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <button v-if="currentView === 'cards'" class="primary-button" type="button" @click="openCreateModal">
-            Create new card
-          </button>
         </div>
       </section>
 
@@ -325,8 +303,7 @@ onUnmounted(() => {
       <section v-else-if="cards.length === 0" class="empty-state">
         <p class="empty-title">No cards saved yet</p>
         <p class="empty-copy">
-          Create the first symbol and the backend will start tracking the matching MEXC USDT
-          futures contract.
+          Cards will appear here after the automated list update.
         </p>
       </section>
 
@@ -385,7 +362,6 @@ onUnmounted(() => {
             :key="card.id"
             :card="card"
             @edit="openEditModal"
-            @delete="deleteCard"
           />
         </section>
       </section>

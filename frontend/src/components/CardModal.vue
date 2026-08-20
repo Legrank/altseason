@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { reactive, watch } from 'vue'
 
 import type { Card } from '../types'
 
@@ -21,9 +21,6 @@ const form = reactive({
   buyPriceRisk: '',
   sellPrice: ''
 })
-
-const title = computed(() => (props.card ? 'Edit card' : 'Create card'))
-const buttonLabel = computed(() => (props.card ? 'Save' : 'Create'))
 
 watch(
   () => [props.open, props.card] as const,
@@ -56,7 +53,7 @@ function handleSubmit() {
       <div class="modal-header">
         <div>
           <p class="modal-eyebrow">Card editor</p>
-          <h2>{{ title }}</h2>
+          <h2>Edit card</h2>
         </div>
         <button type="button" class="icon-button" @click="emit('close')">x</button>
       </div>
@@ -112,7 +109,7 @@ function handleSubmit() {
         <div class="modal-actions">
           <button type="button" class="secondary-button" @click="emit('close')">Cancel</button>
           <button type="submit" class="primary-button" :disabled="submitting">
-            {{ submitting ? 'Saving...' : buttonLabel }}
+            {{ submitting ? 'Saving...' : 'Save' }}
           </button>
         </div>
       </form>

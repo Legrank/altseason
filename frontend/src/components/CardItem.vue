@@ -7,7 +7,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   edit: [card: Card]
-  delete: [card: Card]
 }>()
 
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -130,9 +129,6 @@ function getMexcStatusClass(status: MexcSyncStatus) {
     <div class="card-actions">
       <button type="button" class="secondary-button" @click="emit('edit', props.card)">
         Edit
-      </button>
-      <button type="button" class="danger-button" @click="emit('delete', props.card)">
-        Delete
       </button>
     </div>
   </article>
