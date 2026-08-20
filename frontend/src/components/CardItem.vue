@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Card, MexcSyncStatus } from '../types'
+import type { Card } from '../types'
 
 const props = defineProps<{
   card: Card
@@ -40,28 +40,6 @@ function formatDate(value: string) {
   return dateFormatter.format(new Date(value))
 }
 
-function getMexcStatusLabel(status: MexcSyncStatus) {
-  switch (status) {
-    case 'synced':
-      return 'Futures synced'
-    case 'not_found':
-      return 'Contract not found'
-    case 'error':
-      return 'Sync error'
-    case 'pending':
-    default:
-      return 'Sync pending'
-  }
-}
-
-function getMexcStatusClass(status: MexcSyncStatus) {
-  return {
-    synced: status === 'synced',
-    pending: status === 'pending',
-    missing: status === 'not_found',
-    error: status === 'error'
-  }
-}
 </script>
 
 <template>
@@ -106,22 +84,22 @@ function getMexcStatusClass(status: MexcSyncStatus) {
         </div>
       </div>
 
-      <div class="sync-panel">
-        <span class="sync-badge" :class="getMexcStatusClass(props.card.mexcSyncStatus)">
-          {{ getMexcStatusLabel(props.card.mexcSyncStatus) }}
+      <div
+        v-if="props.card.mexcSyncStatus === 'not_found' || props.card.mexcSyncStatus === 'error'"
+        class="sync-panel"
+      >
+        <span
+          class="sync-badge"
+          :class="props.card.mexcSyncStatus === 'not_found' ? 'missing' : 'error'"
+        >
+          {{ props.card.mexcSyncStatus === 'not_found' ? 'Contract not found' : 'Sync error' }}
         </span>
 
-        <p v-if="props.card.mexcSyncStatus === 'synced' && props.card.mexcPriceUpdatedAt" class="sync-copy">
-          Last MEXC futures update: {{ formatDate(props.card.mexcPriceUpdatedAt) }}
-        </p>
-        <p v-else-if="props.card.mexcSyncStatus === 'not_found'" class="sync-copy">
+        <p v-if="props.card.mexcSyncStatus === 'not_found'" class="sync-copy">
           Contract {{ props.card.symbol }}_USDT is not available on MEXC futures.
         </p>
-        <p v-else-if="props.card.mexcSyncStatus === 'error'" class="sync-copy">
-          MEXC futures sync is temporarily unavailable. Last successful data is preserved.
-        </p>
         <p v-else class="sync-copy">
-          Waiting for the next backend sync cycle.
+          MEXC futures sync is temporarily unavailable. Last successful data is preserved.
         </p>
       </div>
     </div>

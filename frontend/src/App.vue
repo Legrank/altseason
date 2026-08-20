@@ -28,7 +28,7 @@ const cardFilters = reactive({
   withAnyManualPrice: false,
   aboveBuyPriceSafe: false,
   aboveBuyPriceRisk: false,
-  belowSellPrice: false
+  belowSellPrice: false,
 })
 
 const modalState = reactive<{
@@ -36,12 +36,12 @@ const modalState = reactive<{
   card: Card | null
 }>({
   open: false,
-  card: null
+  card: null,
 })
 
 const eventDateFormatter = new Intl.DateTimeFormat('ru-RU', {
   dateStyle: 'medium',
-  timeStyle: 'short'
+  timeStyle: 'short',
 })
 
 const sortedVolumeCards = computed(() =>
@@ -59,7 +59,7 @@ const sortedVolumeCards = computed(() =>
         symbol: card.symbol,
         averageVolume: card.mexcAvgDailyVolume3m,
         volume24h: card.mexcVolume24h,
-        ratio
+        ratio,
       }
     })
     .sort((left, right) => {
@@ -76,18 +76,25 @@ const sortedVolumeCards = computed(() =>
       }
 
       return right.ratio - left.ratio || left.symbol.localeCompare(right.symbol)
-    })
+    }),
 )
 
 const filteredVolumeCards = computed(() =>
-  sortedVolumeCards.value.filter((card) => card.ratio !== null && card.ratio > volumeRatioThreshold.value)
+  sortedVolumeCards.value.filter(
+    (card) => card.ratio !== null && card.ratio > volumeRatioThreshold.value,
+  ),
 )
 
-const normalizedCardSearchQuery = computed(() => cardSearchQuery.value.trim().toUpperCase())
+const normalizedCardSearchQuery = computed(() =>
+  cardSearchQuery.value.trim().toUpperCase(),
+)
 
 const filteredCards = computed(() =>
   cards.value.filter((card) => {
-    if (normalizedCardSearchQuery.value !== '' && !card.symbol.toUpperCase().startsWith(normalizedCardSearchQuery.value)) {
+    if (
+      normalizedCardSearchQuery.value !== '' &&
+      !card.symbol.toUpperCase().startsWith(normalizedCardSearchQuery.value)
+    ) {
       return false
     }
 
@@ -104,32 +111,52 @@ const filteredCards = computed(() =>
 
     if (
       cardFilters.aboveBuyPriceSafe &&
-      (currentPrice === null || card.buyPriceSafe === null || currentPrice <= card.buyPriceSafe)
+      (currentPrice === null ||
+        card.buyPriceSafe === null ||
+        currentPrice <= card.buyPriceSafe)
     ) {
       return false
     }
 
     if (
       cardFilters.aboveBuyPriceRisk &&
-      (currentPrice === null || card.buyPriceRisk === null || currentPrice <= card.buyPriceRisk)
+      (currentPrice === null ||
+        card.buyPriceRisk === null ||
+        currentPrice <= card.buyPriceRisk)
     ) {
       return false
     }
 
-    if (cardFilters.belowSellPrice && (currentPrice === null || card.sellPrice === null || currentPrice >= card.sellPrice)) {
+    if (
+      cardFilters.belowSellPrice &&
+      (currentPrice === null ||
+        card.sellPrice === null ||
+        currentPrice >= card.sellPrice)
+    ) {
       return false
     }
 
     return true
-  })
+  }),
 )
 
 const highlightedThresholdEvents = computed(() =>
-  thresholdEvents.value.filter((event) => event.crossedThresholdCount >= 3)
+  thresholdEvents.value.filter((event) => event.crossedThresholdCount >= 3),
+)
+
+const latestMexcSyncAt = computed(() =>
+  cards.value.reduce<string | null>((latest, card) => {
+    if (!card.mexcPriceUpdatedAt) {
+      return latest
+    }
+
+    return latest === null || card.mexcPriceUpdatedAt > latest ? card.mexcPriceUpdatedAt : latest
+  }, null),
 )
 
 function syncViewFromHash() {
-  currentView.value = window.location.hash === '#volume-signals' ? 'volume-signals' : 'cards'
+  currentView.value =
+    window.location.hash === '#volume-signals' ? 'volume-signals' : 'cards'
 }
 
 function navigateTo(view: AppView) {
@@ -150,7 +177,8 @@ async function loadCards(options?: { background?: boolean }) {
   try {
     cards.value = await cardsApi.list()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Failed to load cards.'
+    errorMessage.value =
+      error instanceof Error ? error.message : 'Failed to load cards.'
   } finally {
     loading.value = false
   }
@@ -164,10 +192,14 @@ async function loadThresholdEvents(options?: { background?: boolean }) {
   thresholdEventsErrorMessage.value = ''
 
   try {
-    thresholdEvents.value = await ratioThresholdEventsApi.list(thresholdEventsThreshold.value)
+    thresholdEvents.value = await ratioThresholdEventsApi.list(
+      thresholdEventsThreshold.value,
+    )
   } catch (error) {
     thresholdEventsErrorMessage.value =
-      error instanceof Error ? error.message : 'Failed to load threshold events.'
+      error instanceof Error
+        ? error.message
+        : 'Failed to load threshold events.'
   } finally {
     thresholdEventsLoading.value = false
   }
@@ -215,10 +247,13 @@ async function submitCard(payload: {
     }
 
     const updated = await cardsApi.update(modalState.card.id, payload)
-    cards.value = cards.value.map((card) => (card.id === updated.id ? updated : card))
+    cards.value = cards.value.map((card) =>
+      card.id === updated.id ? updated : card,
+    )
     closeModal()
   } catch (error) {
-    modalErrorMessage.value = error instanceof Error ? error.message : 'Failed to save the card.'
+    modalErrorMessage.value =
+      error instanceof Error ? error.message : 'Failed to save the card.'
   } finally {
     submitting.value = false
   }
@@ -261,14 +296,12 @@ onUnmounted(() => {
   <div class="shell">
     <main class="layout">
       <section class="hero">
-        <div>
-          <p class="eyebrow">Altseason / MEXC Watch</p>
-          <h1>{{ currentView === 'cards' ? 'Crypto cards with live MEXC futures pricing' : 'Volume ratio signals' }}</h1>
-          <p class="hero-copy" v-if="currentView === 'cards'">
-            Manual price stays editable. MEXC USDT futures price is synced in the backend every
-            5 minutes and reflected here on the next refresh.
-          </p>
-          <p class="hero-copy" v-else>Monitor live ratios and threshold breakouts for MEXC volume spikes.</p>
+        <div class="hero-sync-status">
+          <p class="label">Last MEXC futures sync</p>
+          <time v-if="latestMexcSyncAt" :datetime="latestMexcSyncAt">
+            {{ formatEventDate(latestMexcSyncAt) }}
+          </time>
+          <span v-else>No successful sync yet</span>
         </div>
 
         <div class="hero-actions">
@@ -290,7 +323,6 @@ onUnmounted(() => {
               Volume screen
             </button>
           </div>
-
         </div>
       </section>
 
@@ -311,7 +343,9 @@ onUnmounted(() => {
         <div class="signal-filter-panel cards-filter-panel">
           <div>
             <p class="label">Card filters</p>
-            <p class="filter-value">Showing {{ filteredCards.length }} of {{ cards.length }} cards</p>
+            <p class="filter-value">
+              Showing {{ filteredCards.length }} of {{ cards.length }} cards
+            </p>
           </div>
 
           <label class="field cards-search-field">
@@ -328,28 +362,47 @@ onUnmounted(() => {
 
           <div class="cards-filter-options">
             <label class="filter-toggle">
-              <input v-model="cardFilters.withAnyManualPrice" type="checkbox" @change="handleCardFilterChange" />
+              <input
+                v-model="cardFilters.withAnyManualPrice"
+                type="checkbox"
+                @change="handleCardFilterChange"
+              />
               <span>At least one price is set</span>
             </label>
 
             <label class="filter-toggle">
-              <input v-model="cardFilters.aboveBuyPriceSafe" type="checkbox" @change="handleCardFilterChange" />
+              <input
+                v-model="cardFilters.aboveBuyPriceSafe"
+                type="checkbox"
+                @change="handleCardFilterChange"
+              />
               <span>Current price above buy price safe</span>
             </label>
 
             <label class="filter-toggle">
-              <input v-model="cardFilters.aboveBuyPriceRisk" type="checkbox" @change="handleCardFilterChange" />
+              <input
+                v-model="cardFilters.aboveBuyPriceRisk"
+                type="checkbox"
+                @change="handleCardFilterChange"
+              />
               <span>Current price above buy price risk</span>
             </label>
 
             <label class="filter-toggle">
-              <input v-model="cardFilters.belowSellPrice" type="checkbox" @change="handleCardFilterChange" />
+              <input
+                v-model="cardFilters.belowSellPrice"
+                type="checkbox"
+                @change="handleCardFilterChange"
+              />
               <span>Current price below sell price</span>
             </label>
           </div>
         </div>
 
-        <section v-if="filteredCards.length === 0" class="empty-state signal-empty">
+        <section
+          v-if="filteredCards.length === 0"
+          class="empty-state signal-empty"
+        >
           <p class="empty-title">No cards match the selected filters</p>
           <p class="empty-copy">
             Change or clear the filters to show more symbols.
@@ -367,7 +420,11 @@ onUnmounted(() => {
       </section>
 
       <section v-else class="signal-screen">
-        <div class="signal-view-switcher" role="tablist" aria-label="Volume signal views">
+        <div
+          class="signal-view-switcher"
+          role="tablist"
+          aria-label="Volume signal views"
+        >
           <button
             type="button"
             class="signal-view-tab"
@@ -387,10 +444,14 @@ onUnmounted(() => {
         </div>
 
         <template v-if="volumeSignalsView === 'current-ratios'">
-          <div v-if="sortedVolumeCards.length === 0" class="empty-state signal-empty">
+          <div
+            v-if="sortedVolumeCards.length === 0"
+            class="empty-state signal-empty"
+          >
             <p class="empty-title">No volume data yet</p>
             <p class="empty-copy">
-              Wait for MEXC volume sync or backfill to complete, then the ranking screen will appear here.
+              Wait for MEXC volume sync or backfill to complete, then the
+              ranking screen will appear here.
             </p>
           </div>
 
@@ -398,11 +459,19 @@ onUnmounted(() => {
             <div class="signal-filter-panel">
               <div>
                 <p class="label">Ratio threshold</p>
-                <p class="filter-value">Showing cards with ratio above {{ volumeRatioThreshold }}x</p>
+                <p class="filter-value">
+                  Showing cards with ratio above {{ volumeRatioThreshold }}x
+                </p>
               </div>
 
               <label class="range-field">
-                <input v-model.number="volumeRatioThreshold" type="range" min="2" max="10" step="1" />
+                <input
+                  v-model.number="volumeRatioThreshold"
+                  type="range"
+                  min="2"
+                  max="10"
+                  step="1"
+                />
                 <div class="range-scale">
                   <span>2x</span>
                   <span>10x</span>
@@ -410,10 +479,14 @@ onUnmounted(() => {
               </label>
             </div>
 
-            <section v-if="filteredVolumeCards.length === 0" class="empty-state signal-empty">
+            <section
+              v-if="filteredVolumeCards.length === 0"
+              class="empty-state signal-empty"
+            >
               <p class="empty-title">No cards above the selected threshold</p>
               <p class="empty-copy">
-                Lower the ratio slider to include more symbols in the volume ranking.
+                Lower the ratio slider to include more symbols in the volume
+                ranking.
               </p>
             </section>
 
@@ -434,11 +507,20 @@ onUnmounted(() => {
           <div class="signal-filter-panel">
             <div>
               <p class="label">Threshold history</p>
-              <p class="filter-value">Showing exact breakout events for threshold {{ thresholdEventsThreshold }}x</p>
+              <p class="filter-value">
+                Showing exact breakout events for threshold
+                {{ thresholdEventsThreshold }}x
+              </p>
             </div>
 
             <label class="range-field">
-              <input v-model.number="thresholdEventsThreshold" type="range" min="2" max="10" step="1" />
+              <input
+                v-model.number="thresholdEventsThreshold"
+                type="range"
+                min="2"
+                max="10"
+                step="1"
+              />
               <div class="range-scale">
                 <span>2x</span>
                 <span>10x</span>
@@ -446,18 +528,30 @@ onUnmounted(() => {
             </label>
           </div>
 
-          <p v-if="thresholdEventsErrorMessage" class="banner banner-error signal-banner">
+          <p
+            v-if="thresholdEventsErrorMessage"
+            class="banner banner-error signal-banner"
+          >
             {{ thresholdEventsErrorMessage }}
           </p>
 
-          <section v-if="thresholdEventsLoading" class="empty-state signal-empty">
+          <section
+            v-if="thresholdEventsLoading"
+            class="empty-state signal-empty"
+          >
             <p>Loading threshold events...</p>
           </section>
 
-          <section v-else-if="thresholdEvents.length === 0" class="empty-state signal-empty">
-            <p class="empty-title">No events for threshold {{ thresholdEventsThreshold }}x</p>
+          <section
+            v-else-if="thresholdEvents.length === 0"
+            class="empty-state signal-empty"
+          >
+            <p class="empty-title">
+              No events for threshold {{ thresholdEventsThreshold }}x
+            </p>
             <p class="empty-copy">
-              New breakouts will appear here after the next qualifying sync cycle.
+              New breakouts will appear here after the next qualifying sync
+              cycle.
             </p>
           </section>
 
@@ -471,12 +565,18 @@ onUnmounted(() => {
               </div>
 
               <div class="event-list">
-                <div v-for="event in thresholdEvents" :key="event.id" class="event-row">
+                <div
+                  v-for="event in thresholdEvents"
+                  :key="event.id"
+                  class="event-row"
+                >
                   <div>
                     <p class="label">Symbol</p>
                     <p class="event-symbol">{{ event.symbol }}</p>
                   </div>
-                  <time class="event-time">{{ formatEventDate(event.eventAt) }}</time>
+                  <time class="event-time">{{
+                    formatEventDate(event.eventAt)
+                  }}</time>
                 </div>
               </div>
             </article>
@@ -489,19 +589,30 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div v-if="highlightedThresholdEvents.length === 0" class="event-panel-empty">
+              <div
+                v-if="highlightedThresholdEvents.length === 0"
+                class="event-panel-empty"
+              >
                 <p>No large jump events for this threshold yet.</p>
               </div>
 
               <div v-else class="event-list">
-                <div v-for="event in highlightedThresholdEvents" :key="`jump-${event.id}`" class="event-row">
+                <div
+                  v-for="event in highlightedThresholdEvents"
+                  :key="`jump-${event.id}`"
+                  class="event-row"
+                >
                   <div>
                     <p class="label">Symbol</p>
                     <p class="event-symbol">{{ event.symbol }}</p>
                   </div>
                   <div class="event-meta">
-                    <span class="jump-badge">{{ event.crossedThresholdCount }} thresholds</span>
-                    <time class="event-time">{{ formatEventDate(event.eventAt) }}</time>
+                    <span class="jump-badge"
+                      >{{ event.crossedThresholdCount }} thresholds</span
+                    >
+                    <time class="event-time">{{
+                      formatEventDate(event.eventAt)
+                    }}</time>
                   </div>
                 </div>
               </div>
