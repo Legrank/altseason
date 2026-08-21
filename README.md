@@ -39,6 +39,30 @@ reverse proxy.
 docker compose up -d --build
 ```
 
+### Production authentication
+
+The public site and its API are protected by HTTP Basic Authentication in the host Nginx config.
+Before installing `deploy/nginx/alt.legrank.ru.conf`, create the password file on the server:
+
+```bash
+sudo apt-get install apache2-utils
+sudo htpasswd -c /etc/nginx/.htpasswd-altseason owner
+sudo chown root:www-data /etc/nginx/.htpasswd-altseason
+sudo chmod 640 /etc/nginx/.htpasswd-altseason
+```
+
+Replace `owner` with the desired login. `htpasswd` prompts for the password and stores only its
+hash. Then install the config and validate it before reloading Nginx:
+
+```bash
+sudo cp deploy/nginx/alt.legrank.ru.conf /etc/nginx/sites-available/alt.legrank.ru.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Authentication is enabled only on HTTPS. The HTTP server continues to redirect requests to HTTPS,
+and the Docker health check calls the backend directly, so it does not require credentials.
+
 ## Telegram Bot
 
 The backend can run a Telegram bot that sends private notifications when a `ratio` level is crossed.

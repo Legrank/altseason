@@ -9,3 +9,4 @@ backend/data/
 .env.local
 backend/.env
 backend/.env.local
+.htpasswd*

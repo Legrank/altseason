@@ -21,7 +21,15 @@ const cardService = new CardService({
   repository,
   dailyVolumeProvider: mexcClient
 })
-const app = createApp(repository, cardService)
+const app = createApp(repository, cardService, undefined, {
+  logger: {
+    level: process.env.LOG_LEVEL?.trim() || 'info',
+    redact: {
+      paths: ['req.headers.authorization', 'req.headers.cookie'],
+      censor: '[REDACTED]'
+    }
+  }
+})
 const telegramConfig = readTelegramBotConfig()
 const telegramBotService =
   telegramConfig &&
@@ -31,17 +39,27 @@ const telegramBotService =
         client: new TelegramClient({ token: telegramConfig.token }),
         allowedUserIds: telegramConfig.allowedUserIds,
         allowedUsernames: telegramConfig.allowedUsernames,
-        defaultMinThreshold: telegramConfig.defaultMinThreshold
+        defaultMinThreshold: telegramConfig.defaultMinThreshold,
+        logger: {
+          error(message, error) {
+            app.log.error({ err: error }, message)
+          },
+          warn(message) {
+            app.log.warn(message)
+          }
+        }
       })
     : null
 const mexcSyncService = new MexcSyncService({
   repository,
   mexcClient,
+  logger: app.log,
   onSyncCompleted: telegramBotService ? () => telegramBotService.deliverPendingNotifications() : undefined
 })
 const mexcContractSyncService = new MexcContractSyncService({
   repository,
   mexcClient,
+  logger: app.log,
   onSyncCompleted: () => mexcSyncService.syncNow()
 })
 const port = Number(process.env.PORT ?? 3001)

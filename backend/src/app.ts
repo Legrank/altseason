@@ -1,4 +1,4 @@
-import Fastify from 'fastify'
+import Fastify, { type FastifyServerOptions } from 'fastify'
 
 import { CardRepository } from './repository.js'
 import { CardService } from './services/card-service.js'
@@ -13,6 +13,10 @@ interface CardMutationService {
 
 interface RatioThresholdEventQueryService {
   list(threshold: number): RatioThresholdEvent[]
+}
+
+interface AppOptions {
+  logger?: FastifyServerOptions['logger']
 }
 
 function normalizeOptionalPrice(value: unknown): number | null | undefined {
@@ -73,9 +77,10 @@ function normalizePayload(payload: unknown): CardPayload | null {
 export function createApp(
   repository: CardRepository,
   cardMutationService?: CardMutationService,
-  ratioThresholdEventQueryService?: RatioThresholdEventQueryService
+  ratioThresholdEventQueryService?: RatioThresholdEventQueryService,
+  options: AppOptions = {}
 ) {
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: options.logger ?? false })
   const cards = cardMutationService ?? new CardService({ repository })
   const ratioThresholdEvents =
     ratioThresholdEventQueryService ?? new RatioThresholdEventService({ repository })
@@ -106,7 +111,10 @@ export function createApp(
       })
     }
 
-    return reply.code(201).send(await cards.create(payload))
+    const created = await cards.create(payload)
+    request.log.info({ cardId: created.id, symbol: created.symbol }, 'Card created.')
+
+    return reply.code(201).send(created)
   })
 
   app.put('/api/cards/:id', async (request, reply) => {
@@ -130,6 +138,8 @@ export function createApp(
       return reply.code(404).send({ message: 'Card not found.' })
     }
 
+    request.log.info({ cardId: updated.id, symbol: updated.symbol }, 'Card updated.')
+
     return updated
   })
 
@@ -145,6 +155,8 @@ export function createApp(
     if (!deleted) {
       return reply.code(404).send({ message: 'Card not found.' })
     }
+
+    request.log.info({ cardId: id }, 'Card deleted.')
 
     return reply.code(204).send()
   })

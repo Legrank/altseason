@@ -505,11 +505,19 @@ test('does not wipe last successful price when sync fails', async (t) => {
     repository.close()
   })
 
+  const loggedErrors: Array<{ context: Record<string, unknown>; message: string }> = []
   const service = new MexcSyncService({
     repository,
     mexcClient: {
       async getAllUsdtFuturesPrices() {
         throw new Error('network down')
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error(context, message) {
+        loggedErrors.push({ context, message })
       }
     }
   })
@@ -527,6 +535,8 @@ test('does not wipe last successful price when sync fails', async (t) => {
   assert.equal(fresh?.mexcPrice, null)
   assert.equal(fresh?.mexcAmount24h, null)
   assert.equal(fresh?.mexcSyncStatus, 'error')
+  assert.equal(loggedErrors[0]?.message, 'MEXC price synchronization failed.')
+  assert.equal((loggedErrors[0]?.context.err as Error | undefined)?.message, 'network down')
 })
 
 test('rolls daily amounts once per UTC day using amount24 from ticker', async (t) => {

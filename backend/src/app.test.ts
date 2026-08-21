@@ -382,3 +382,55 @@ test('creates a card even when average daily volume lookup fails', async (t) => 
   assert.equal(response.json().mexcAvgDailyVolume3m, null)
   assert.equal(response.json().mexcVolume24h, null)
 })
+
+test('logs database write failures with request context', async (t) => {
+  const repository = new CardRepository(':memory:')
+  const logLines: string[] = []
+  const app = createApp(
+    repository,
+    {
+      list() {
+        return []
+      },
+      async create() {
+        throw new Error('database is locked')
+      },
+      async update() {
+        throw new Error('database is locked')
+      }
+    },
+    undefined,
+    {
+      logger: {
+        level: 'info',
+        stream: {
+          write(line) {
+            logLines.push(line)
+          }
+        }
+      }
+    }
+  )
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const response = await app.inject({
+    method: 'PUT',
+    url: '/api/cards/1',
+    payload: {
+      symbol: 'BTC',
+      buyPriceSafe: 100
+    }
+  })
+
+  assert.equal(response.statusCode, 500)
+
+  const records = logLines.map((line) => JSON.parse(line) as Record<string, unknown>)
+  const errorRecord = records.find((record) => record.level === 50)
+
+  assert.equal((errorRecord?.err as { message?: string } | undefined)?.message, 'database is locked')
+  assert.equal(typeof errorRecord?.reqId, 'string')
+})

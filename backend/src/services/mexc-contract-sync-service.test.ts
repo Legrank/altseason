@@ -48,6 +48,7 @@ test('does not delete cards or record success for an empty contract response', a
 
   t.after(() => repository.close())
 
+  const loggedErrors: Array<{ context: Record<string, unknown>; message: string }> = []
   const service = new MexcContractSyncService({
     repository,
     mexcClient: {
@@ -55,7 +56,14 @@ test('does not delete cards or record success for an empty contract response', a
         return []
       }
     },
-    now: () => new Date('2026-08-21T10:00:00.000Z')
+    now: () => new Date('2026-08-21T10:00:00.000Z'),
+    logger: {
+      info() {},
+      warn() {},
+      error(context, message) {
+        loggedErrors.push({ context, message })
+      }
+    }
   })
 
   const result = await service.syncNow()
@@ -63,6 +71,11 @@ test('does not delete cards or record success for an empty contract response', a
   assert.equal(result, null)
   assert.deepEqual(repository.getTrackedSymbols(), ['BTC'])
   assert.equal(repository.getUsdtContractSyncCompletedAt(), null)
+  assert.equal(loggedErrors[0]?.message, 'MEXC contract synchronization failed.')
+  assert.match(
+    (loggedErrors[0]?.context.err as Error | undefined)?.message ?? '',
+    /empty USDT contract list/u
+  )
 })
 
 test('runs immediately without prior sync metadata', async (t) => {

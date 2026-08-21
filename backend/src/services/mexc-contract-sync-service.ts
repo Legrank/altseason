@@ -1,5 +1,17 @@
 import type { CardRepository, UsdtContractCardSyncResult } from '../repository.js'
 
+interface Logger {
+  info(context: Record<string, unknown>, message: string): void
+  warn(context: Record<string, unknown>, message: string): void
+  error(context: Record<string, unknown>, message: string): void
+}
+
+const noopLogger: Logger = {
+  info() {},
+  warn() {},
+  error() {}
+}
+
 export const MEXC_CONTRACT_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_RETRY_INTERVAL_MS = 60 * 60 * 1000
 
@@ -14,6 +26,7 @@ interface MexcContractSyncServiceOptions {
   retryIntervalMs?: number
   now?: () => Date
   onSyncCompleted?: (result: UsdtContractCardSyncResult) => Promise<void> | void
+  logger?: Logger
 }
 
 function toBaseSymbol(contractSymbol: string): string | null {
@@ -34,6 +47,7 @@ export class MexcContractSyncService {
   private readonly retryIntervalMs: number
   private readonly now: () => Date
   private readonly onSyncCompleted?: (result: UsdtContractCardSyncResult) => Promise<void> | void
+  private readonly logger: Logger
   private timer: NodeJS.Timeout | null = null
   private started = false
   private inProgress = false
@@ -45,6 +59,7 @@ export class MexcContractSyncService {
     this.retryIntervalMs = options.retryIntervalMs ?? DEFAULT_RETRY_INTERVAL_MS
     this.now = options.now ?? (() => new Date())
     this.onSyncCompleted = options.onSyncCompleted
+    this.logger = options.logger ?? noopLogger
   }
 
   start(): void {
@@ -80,14 +95,29 @@ export class MexcContractSyncService {
       const completedAt = this.now().toISOString()
       const result = this.repository.syncUsdtContractCards(baseSymbols, completedAt)
 
+      this.logger.info(
+        {
+          contractCount: baseSymbols.length,
+          createdCount: result.createdCount,
+          deletedCount: result.deletedCount,
+          completedAt
+        },
+        'MEXC contract synchronization completed.'
+      )
+
       try {
         await this.onSyncCompleted?.(result)
-      } catch {
+      } catch (error) {
         // Follow-up price synchronization must not invalidate a completed catalog sync.
+        this.logger.warn(
+          { err: error },
+          'Post-contract-synchronization price update failed.'
+        )
       }
 
       return result
-    } catch {
+    } catch (error) {
+      this.logger.error({ err: error }, 'MEXC contract synchronization failed.')
       return null
     } finally {
       this.inProgress = false
