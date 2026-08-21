@@ -72,6 +72,18 @@ export class CardService {
       buyPriceSafe: card.buyPriceSafe,
       buyPriceRisk: card.buyPriceRisk,
       sellPrice: card.sellPrice,
+      buyPriceSafeMaxIncreasePercent: this.calculateMaxIncreasePercent(
+        card.buyPriceSafe,
+        card.buyPriceSafeMaxObserved
+      ),
+      buyPriceRiskMaxIncreasePercent: this.calculateMaxIncreasePercent(
+        card.buyPriceRisk,
+        card.buyPriceRiskMaxObserved
+      ),
+      sellPriceMaxDecreasePercent: this.calculateMaxDecreasePercent(
+        card.sellPrice,
+        card.sellPriceMinObserved
+      ),
       createdAt: card.createdAt,
       mexcPrice: card.mexcPrice,
       mexcAvgDailyVolume3m: calculateRobustAverage(card.mexcDailyAmounts3m ?? []),
@@ -79,5 +91,21 @@ export class CardService {
       mexcPriceUpdatedAt: card.mexcPriceUpdatedAt,
       mexcSyncStatus: card.mexcSyncStatus
     }
+  }
+
+  private calculateMaxIncreasePercent(level: number | null, maximum: number | null): number | null {
+    if (level === null || maximum === null || level <= 0) {
+      return null
+    }
+
+    return Math.max(0, ((maximum - level) / level) * 100)
+  }
+
+  private calculateMaxDecreasePercent(level: number | null, minimum: number | null): number | null {
+    if (level === null || minimum === null || level <= 0) {
+      return null
+    }
+
+    return Math.max(0, ((level - minimum) / level) * 100)
   }
 }

@@ -38,6 +38,46 @@ test('creates a card with computed average daily volume', async (t) => {
   assert.deepEqual(repository.getById(created.id)?.mexcDailyAmounts3m, [100, 110, 120])
 })
 
+test('returns maximum growth and decline percentages since each level was saved', async (t) => {
+  const repository = new CardRepository(':memory:')
+
+  t.after(() => {
+    repository.close()
+  })
+
+  const stored = repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: 100,
+    buyPriceRisk: 80,
+    sellPrice: 200
+  })
+  const service = new CardService({ repository })
+
+  repository.applyMexcSnapshot(
+    new Map([['BTC_USDT', { lastPrice: 130, amount24: null }]]),
+    '2026-06-23T10:00:00.000Z',
+    '2026-06-23'
+  )
+  repository.applyMexcPrice('BTC', 70, '2026-06-23T10:05:00.000Z')
+
+  const tracked = service.list()[0]
+
+  assert.equal(tracked.buyPriceSafeMaxIncreasePercent, 30)
+  assert.equal(tracked.buyPriceRiskMaxIncreasePercent, 62.5)
+  assert.equal(tracked.sellPriceMaxDecreasePercent, 65)
+
+  const updated = await service.update(stored.id, {
+    symbol: 'BTC',
+    buyPriceSafe: 120,
+    buyPriceRisk: 80,
+    sellPrice: 200
+  })
+
+  assert.equal(updated?.buyPriceSafeMaxIncreasePercent, 0)
+  assert.equal(updated?.buyPriceRiskMaxIncreasePercent, 62.5)
+  assert.equal(updated?.sellPriceMaxDecreasePercent, 65)
+})
+
 test('keeps average daily volume when symbol does not change', async (t) => {
   const repository = new CardRepository(':memory:')
 

@@ -31,6 +31,9 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   assert.equal(cards[0].buyPriceSafe, 100)
   assert.equal(cards[0].buyPriceRisk, null)
   assert.equal(cards[0].sellPrice, null)
+  assert.equal(cards[0].buyPriceSafeMaxObserved, 100)
+  assert.equal(cards[0].buyPriceRiskMaxObserved, null)
+  assert.equal(cards[0].sellPriceMinObserved, null)
   assert.equal(cards[0].mexcPrice, null)
   assert.equal(cards[0].mexcAmount24h, null)
   assert.equal(cards[0].mexcDailyAmounts3m, null)
@@ -46,12 +49,49 @@ test('migrates an existing cards table to add renamed manual price columns', () 
   })
 
   assert.equal(createResult.buyPriceSafe, 200)
+  assert.equal(createResult.buyPriceSafeMaxObserved, 200)
   assert.equal(createResult.mexcAmount24h, null)
   assert.equal(createResult.mexcDailyAmounts3m, null)
   assert.equal(createResult.mexcDailyAmountsUtcDate, null)
 
   repository.close()
   unlinkSync(databasePath)
+})
+
+test('tracks price extrema and resets only a changed manual level', () => {
+  const repository = new CardRepository(':memory:')
+  const created = repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: 100,
+    buyPriceRisk: 80,
+    sellPrice: 150
+  })
+
+  repository.applyMexcSnapshot(
+    new Map([['BTC_USDT', { lastPrice: 120, amount24: null }]]),
+    '2026-06-23T10:00:00.000Z',
+    '2026-06-23'
+  )
+  repository.applyMexcPrice('BTC', 70, '2026-06-23T10:05:00.000Z')
+
+  const tracked = repository.getById(created.id)
+
+  assert.equal(tracked?.buyPriceSafeMaxObserved, 120)
+  assert.equal(tracked?.buyPriceRiskMaxObserved, 120)
+  assert.equal(tracked?.sellPriceMinObserved, 70)
+
+  const updated = repository.update(created.id, {
+    symbol: 'BTC',
+    buyPriceSafe: 110,
+    buyPriceRisk: 80,
+    sellPrice: 150
+  })
+
+  assert.equal(updated?.buyPriceSafeMaxObserved, 110)
+  assert.equal(updated?.buyPriceRiskMaxObserved, 120)
+  assert.equal(updated?.sellPriceMinObserved, 70)
+
+  repository.close()
 })
 
 test('adds mexc_amount_24h and seeds it from existing daily amounts', () => {

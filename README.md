@@ -127,6 +127,9 @@ Possible `mexcSyncStatus` values:
 
 ## MEXC Sync
 
+- On the first backend launch, cards are automatically created for every MEXC USDT futures contract.
+- The USDT contract catalog is reconciled once a week: new listings are added and delisted contracts are removed.
+- The last successful catalog sync time is stored in SQLite, so restarting the backend does not reset the weekly interval.
 - The backend runs one immediate MEXC sync on startup.
 - After that it refreshes prices every 5 minutes.
 - `buyPriceSafe`, `buyPriceRisk`, and `sellPrice` are optional.

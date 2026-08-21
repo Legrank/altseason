@@ -7,6 +7,7 @@ import { MexcClient } from './integrations/mexc/index.js'
 import { TelegramClient } from './integrations/telegram/client.js'
 import { CardRepository } from './repository.js'
 import { CardService } from './services/card-service.js'
+import { MexcContractSyncService } from './services/mexc-contract-sync-service.js'
 import { MexcSyncService } from './services/mexc-sync-service.js'
 import { TelegramBotService } from './services/telegram-bot-service.js'
 
@@ -38,10 +39,16 @@ const mexcSyncService = new MexcSyncService({
   mexcClient,
   onSyncCompleted: telegramBotService ? () => telegramBotService.deliverPendingNotifications() : undefined
 })
+const mexcContractSyncService = new MexcContractSyncService({
+  repository,
+  mexcClient,
+  onSyncCompleted: () => mexcSyncService.syncNow()
+})
 const port = Number(process.env.PORT ?? 3001)
 const host = process.env.HOST ?? '0.0.0.0'
 
 const shutdown = async () => {
+  mexcContractSyncService.stop()
   mexcSyncService.stop()
   await telegramBotService?.stop()
   await app.close()
@@ -66,6 +73,7 @@ app
     }
 
     telegramBotService?.start()
+    mexcContractSyncService.start()
     mexcSyncService.start()
     console.log(`Backend listening on http://${host}:${port}`)
   })

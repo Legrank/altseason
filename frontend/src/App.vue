@@ -9,6 +9,11 @@ import type { Card, RatioThresholdEvent } from './types'
 
 type AppView = 'cards' | 'volume-signals'
 type VolumeSignalsView = 'current-ratios' | 'threshold-events'
+type CardPercentSort =
+  | 'default'
+  | 'buyPriceSafeMaxIncreasePercent'
+  | 'buyPriceRiskMaxIncreasePercent'
+  | 'sellPriceMaxDecreasePercent'
 
 const cards = ref<Card[]>([])
 const loading = ref(true)
@@ -24,6 +29,7 @@ const thresholdEventsLoading = ref(false)
 const thresholdEventsErrorMessage = ref('')
 const volumeSignalsView = ref<VolumeSignalsView>('current-ratios')
 const cardSearchQuery = ref('')
+const cardPercentSort = ref<CardPercentSort>('default')
 const cardFilters = reactive({
   withAnyManualPrice: false,
   aboveBuyPriceSafe: false,
@@ -89,8 +95,8 @@ const normalizedCardSearchQuery = computed(() =>
   cardSearchQuery.value.trim().toUpperCase(),
 )
 
-const filteredCards = computed(() =>
-  cards.value.filter((card) => {
+const filteredCards = computed(() => {
+  const filtered = cards.value.filter((card) => {
     if (
       normalizedCardSearchQuery.value !== '' &&
       !card.symbol.toUpperCase().startsWith(normalizedCardSearchQuery.value)
@@ -137,8 +143,33 @@ const filteredCards = computed(() =>
     }
 
     return true
-  }),
-)
+  })
+
+  if (cardPercentSort.value === 'default') {
+    return filtered
+  }
+
+  const sortKey = cardPercentSort.value
+
+  return filtered.sort((left, right) => {
+    const leftValue = left[sortKey]
+    const rightValue = right[sortKey]
+
+    if (leftValue === null && rightValue === null) {
+      return left.symbol.localeCompare(right.symbol)
+    }
+
+    if (leftValue === null) {
+      return 1
+    }
+
+    if (rightValue === null) {
+      return -1
+    }
+
+    return rightValue - leftValue || left.symbol.localeCompare(right.symbol)
+  })
+})
 
 const highlightedThresholdEvents = computed(() =>
   thresholdEvents.value.filter((event) => event.crossedThresholdCount >= 3),
@@ -348,17 +379,29 @@ onUnmounted(() => {
             </p>
           </div>
 
-          <label class="field cards-search-field">
-            <span>Search by symbol prefix</span>
-            <input
-              v-model="cardSearchQuery"
-              type="text"
-              inputmode="text"
-              autocomplete="off"
-              placeholder="A, AH, BTC..."
-              @input="handleCardSearchInput"
-            />
-          </label>
+          <div class="cards-filter-controls">
+            <label class="field cards-search-field">
+              <span>Search by symbol prefix</span>
+              <input
+                v-model="cardSearchQuery"
+                type="text"
+                inputmode="text"
+                autocomplete="off"
+                placeholder="A, AH, BTC..."
+                @input="handleCardSearchInput"
+              />
+            </label>
+
+            <label class="field cards-sort-field">
+              <span>Sort cards</span>
+              <select v-model="cardPercentSort">
+                <option value="default">Default order</option>
+                <option value="buyPriceSafeMaxIncreasePercent">Buy price safe growth ↓</option>
+                <option value="buyPriceRiskMaxIncreasePercent">Buy price risk growth ↓</option>
+                <option value="sellPriceMaxDecreasePercent">Sell price decline ↓</option>
+              </select>
+            </label>
+          </div>
 
           <div class="cards-filter-options">
             <label class="filter-toggle">

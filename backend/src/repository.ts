@@ -24,6 +24,9 @@ interface CardRow {
   buy_price_safe: number | null
   buy_price_risk: number | null
   sell_price: number | null
+  buy_price_safe_max_observed: number | null
+  buy_price_risk_max_observed: number | null
+  sell_price_min_observed: number | null
   created_at: string
   mexc_price: number | null
   mexc_amount_24h: number | null
@@ -39,6 +42,9 @@ interface MexcSyncCardRow {
   buy_price_safe: number | null
   buy_price_risk: number | null
   sell_price: number | null
+  buy_price_safe_max_observed: number | null
+  buy_price_risk_max_observed: number | null
+  sell_price_min_observed: number | null
   mexc_price: number | null
   mexc_amount_24h: number | null
   mexc_daily_amounts_3m: string | null
@@ -82,6 +88,13 @@ interface ColumnInfoRow {
   notnull: number
 }
 
+export interface UsdtContractCardSyncResult {
+  createdCount: number
+  deletedCount: number
+}
+
+const USDT_CONTRACT_SYNC_COMPLETED_AT_KEY = 'mexc_usdt_contract_sync_completed_at'
+
 export class CardRepository {
   private readonly db: DatabaseSync
   private readonly usesFileDatabase: boolean
@@ -100,7 +113,7 @@ export class CardRepository {
 
   list(): StoredCard[] {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       ORDER BY created_at DESC, id DESC
     `)
@@ -121,11 +134,14 @@ export class CardRepository {
     const mexcDailyAmounts3m = options?.mexcDailyAmounts3m ?? null
     const mexcDailyAmountsUtcDate = options?.mexcDailyAmountsUtcDate ?? null
     const statement = this.db.prepare(`
-      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const result = statement.run(
       payload.symbol,
+      payload.buyPriceSafe,
+      payload.buyPriceRisk,
+      payload.sellPrice,
       payload.buyPriceSafe,
       payload.buyPriceRisk,
       payload.sellPrice,
@@ -142,6 +158,9 @@ export class CardRepository {
       buyPriceSafe: payload.buyPriceSafe,
       buyPriceRisk: payload.buyPriceRisk,
       sellPrice: payload.sellPrice,
+      buyPriceSafeMaxObserved: payload.buyPriceSafe,
+      buyPriceRiskMaxObserved: payload.buyPriceRisk,
+      sellPriceMinObserved: payload.sellPrice,
       createdAt,
       mexcPrice: null,
       mexcAmount24h,
@@ -168,6 +187,16 @@ export class CardRepository {
     }
 
     const symbolChanged = existing.symbol !== payload.symbol
+    const buyPriceSafeChanged = symbolChanged || existing.buyPriceSafe !== payload.buyPriceSafe
+    const buyPriceRiskChanged = symbolChanged || existing.buyPriceRisk !== payload.buyPriceRisk
+    const sellPriceChanged = symbolChanged || existing.sellPrice !== payload.sellPrice
+    const nextBuyPriceSafeMaxObserved = buyPriceSafeChanged
+      ? payload.buyPriceSafe
+      : existing.buyPriceSafeMaxObserved
+    const nextBuyPriceRiskMaxObserved = buyPriceRiskChanged
+      ? payload.buyPriceRisk
+      : existing.buyPriceRiskMaxObserved
+    const nextSellPriceMinObserved = sellPriceChanged ? payload.sellPrice : existing.sellPriceMinObserved
     const nextMexcAmount24h =
       options?.mexcAmount24h === undefined
         ? symbolChanged
@@ -183,7 +212,7 @@ export class CardRepository {
 
     const statement = this.db.prepare(`
       UPDATE cards
-      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
+      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?, mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
       WHERE id = ?
     `)
 
@@ -192,6 +221,9 @@ export class CardRepository {
       payload.buyPriceSafe,
       payload.buyPriceRisk,
       payload.sellPrice,
+      nextBuyPriceSafeMaxObserved,
+      nextBuyPriceRiskMaxObserved,
+      nextSellPriceMinObserved,
       symbolChanged ? null : existing.mexcPrice,
       nextMexcAmount24h,
       this.serializeDailyAmounts(nextMexcDailyAmounts3m),
@@ -207,6 +239,9 @@ export class CardRepository {
       buyPriceSafe: payload.buyPriceSafe,
       buyPriceRisk: payload.buyPriceRisk,
       sellPrice: payload.sellPrice,
+      buyPriceSafeMaxObserved: nextBuyPriceSafeMaxObserved,
+      buyPriceRiskMaxObserved: nextBuyPriceRiskMaxObserved,
+      sellPriceMinObserved: nextSellPriceMinObserved,
       mexcPrice: symbolChanged ? null : existing.mexcPrice,
       mexcAmount24h: nextMexcAmount24h,
       mexcDailyAmounts3m: nextMexcDailyAmounts3m,
@@ -239,6 +274,88 @@ export class CardRepository {
     const rows = statement.all() as unknown as Array<{ symbol: string }>
 
     return rows.map((row) => row.symbol)
+  }
+
+  getUsdtContractSyncCompletedAt(): string | null {
+    const row = this.db
+      .prepare(`
+        SELECT value
+        FROM app_metadata
+        WHERE key = ?
+      `)
+      .get(USDT_CONTRACT_SYNC_COMPLETED_AT_KEY) as { value: string } | undefined
+
+    return row?.value ?? null
+  }
+
+  syncUsdtContractCards(
+    symbols: readonly string[],
+    completedAt: string
+  ): UsdtContractCardSyncResult {
+    const normalizedSymbols = [
+      ...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))
+    ]
+
+    // An empty exchange response must never be allowed to wipe the local catalog.
+    if (normalizedSymbols.length === 0) {
+      throw new Error('Cannot synchronize cards from an empty USDT contract list.')
+    }
+
+    return this.withTransaction(() => {
+      const existingRows = this.db
+        .prepare('SELECT id, symbol FROM cards ORDER BY id ASC')
+        .all() as unknown as Array<{ id: number; symbol: string }>
+      const existingSymbols = new Set(existingRows.map((row) => row.symbol))
+      const nextSymbols = new Set(normalizedSymbols)
+      const insertCard = this.db.prepare(`
+        INSERT INTO cards (
+          symbol,
+          buy_price_safe,
+          buy_price_risk,
+          sell_price,
+          buy_price_safe_max_observed,
+          buy_price_risk_max_observed,
+          sell_price_min_observed,
+          created_at
+        )
+        VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, ?)
+      `)
+      const deletePriceEvents = this.db.prepare('DELETE FROM price_level_events WHERE card_id = ?')
+      const deleteRatioEvents = this.db.prepare('DELETE FROM ratio_threshold_events WHERE symbol = ?')
+      const deleteCard = this.db.prepare('DELETE FROM cards WHERE id = ?')
+      let createdCount = 0
+      let deletedCount = 0
+
+      for (const symbol of normalizedSymbols) {
+        if (existingSymbols.has(symbol)) {
+          continue
+        }
+
+        insertCard.run(symbol, completedAt)
+        createdCount += 1
+      }
+
+      for (const row of existingRows) {
+        if (nextSymbols.has(row.symbol)) {
+          continue
+        }
+
+        deletePriceEvents.run(row.id)
+        deleteRatioEvents.run(row.symbol)
+        deleteCard.run(row.id)
+        deletedCount += 1
+      }
+
+      this.db
+        .prepare(`
+          INSERT INTO app_metadata (key, value)
+          VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `)
+        .run(USDT_CONTRACT_SYNC_COMPLETED_AT_KEY, completedAt)
+
+      return { createdCount, deletedCount }
+    })
   }
 
   listRatioThresholdEvents(threshold: number): RatioThresholdEvent[] {
@@ -497,7 +614,7 @@ export class CardRepository {
     this.withTransaction(() => {
       const updateSyncedStatement = this.db.prepare(`
         UPDATE cards
-        SET mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
+        SET mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced', buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?
         WHERE id = ?
       `)
       const markNotFoundStatement = this.db.prepare(`
@@ -550,6 +667,9 @@ export class CardRepository {
           this.serializeDailyAmounts(nextDailyAmounts.values),
           nextDailyAmounts.utcDate,
           updatedAt,
+          this.nextMaximum(card.buy_price_safe, card.buy_price_safe_max_observed, marketSnapshot.lastPrice),
+          this.nextMaximum(card.buy_price_risk, card.buy_price_risk_max_observed, marketSnapshot.lastPrice),
+          this.nextMinimum(card.sell_price, card.sell_price_min_observed, marketSnapshot.lastPrice),
           card.id
         )
 
@@ -569,7 +689,7 @@ export class CardRepository {
 
   getById(id: number): StoredCard | null {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       WHERE id = ?
     `)
@@ -586,6 +706,9 @@ export class CardRepository {
         buy_price_safe REAL NULL,
         buy_price_risk REAL NULL,
         sell_price REAL NULL,
+        buy_price_safe_max_observed REAL NULL,
+        buy_price_risk_max_observed REAL NULL,
+        sell_price_min_observed REAL NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_amount_24h REAL NULL,
@@ -631,6 +754,13 @@ export class CardRepository {
         trigger_price REAL NOT NULL,
         market_price REAL NOT NULL,
         event_at TEXT NOT NULL
+      )
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS app_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       )
     `)
 
@@ -687,6 +817,21 @@ export class CardRepository {
       this.db.exec('ALTER TABLE cards ADD COLUMN sell_price REAL NULL')
     }
 
+    if (!columns.has('buy_price_safe_max_observed')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN buy_price_safe_max_observed REAL NULL')
+      this.db.exec('UPDATE cards SET buy_price_safe_max_observed = buy_price_safe')
+    }
+
+    if (!columns.has('buy_price_risk_max_observed')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN buy_price_risk_max_observed REAL NULL')
+      this.db.exec('UPDATE cards SET buy_price_risk_max_observed = buy_price_risk')
+    }
+
+    if (!columns.has('sell_price_min_observed')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN sell_price_min_observed REAL NULL')
+      this.db.exec('UPDATE cards SET sell_price_min_observed = sell_price')
+    }
+
     if (!telegramSubscriberColumns.has('last_notified_price_event_id')) {
       this.db.exec('ALTER TABLE telegram_subscribers ADD COLUMN last_notified_price_event_id INTEGER NULL')
     }
@@ -739,6 +884,15 @@ export class CardRepository {
         : 'NULL'
     const buyPriceRiskSelect = columns.has('buy_price_risk') ? 'buy_price_risk' : 'NULL'
     const sellPriceSelect = columns.has('sell_price') ? 'sell_price' : 'NULL'
+    const buyPriceSafeMaxObservedSelect = columns.has('buy_price_safe_max_observed')
+      ? 'buy_price_safe_max_observed'
+      : buyPriceSafeSelect
+    const buyPriceRiskMaxObservedSelect = columns.has('buy_price_risk_max_observed')
+      ? 'buy_price_risk_max_observed'
+      : buyPriceRiskSelect
+    const sellPriceMinObservedSelect = columns.has('sell_price_min_observed')
+      ? 'sell_price_min_observed'
+      : sellPriceSelect
     const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
     const mexcAmount24hSelect = columns.has('mexc_amount_24h') ? 'mexc_amount_24h' : 'NULL'
     const mexcDailyAmounts3mSelect = columns.has('mexc_daily_amounts_3m') ? 'mexc_daily_amounts_3m' : 'NULL'
@@ -759,6 +913,9 @@ export class CardRepository {
         buy_price_safe REAL NULL,
         buy_price_risk REAL NULL,
         sell_price REAL NULL,
+        buy_price_safe_max_observed REAL NULL,
+        buy_price_risk_max_observed REAL NULL,
+        sell_price_min_observed REAL NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_amount_24h REAL NULL,
@@ -774,6 +931,9 @@ export class CardRepository {
         buy_price_safe,
         buy_price_risk,
         sell_price,
+        buy_price_safe_max_observed,
+        buy_price_risk_max_observed,
+        sell_price_min_observed,
         created_at,
         mexc_price,
         mexc_amount_24h,
@@ -788,6 +948,9 @@ export class CardRepository {
         ${buyPriceSafeSelect},
         ${buyPriceRiskSelect},
         ${sellPriceSelect},
+        ${buyPriceSafeMaxObservedSelect},
+        ${buyPriceRiskMaxObservedSelect},
+        ${sellPriceMinObservedSelect},
         created_at,
         ${mexcPriceSelect},
         ${mexcAmount24hSelect},
@@ -810,6 +973,9 @@ export class CardRepository {
       buyPriceSafe: row.buy_price_safe,
       buyPriceRisk: row.buy_price_risk,
       sellPrice: row.sell_price,
+      buyPriceSafeMaxObserved: row.buy_price_safe_max_observed,
+      buyPriceRiskMaxObserved: row.buy_price_risk_max_observed,
+      sellPriceMinObserved: row.sell_price_min_observed,
       createdAt: row.created_at,
       mexcPrice: row.mexc_price,
       mexcAmount24h: row.mexc_amount_24h,
@@ -851,7 +1017,7 @@ export class CardRepository {
   private getCardsForMexcSync(symbol?: string): MexcSyncCardRow[] {
     if (symbol) {
       const statement = this.db.prepare(`
-        SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+        SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
         FROM cards
         WHERE symbol = ?
       `)
@@ -860,7 +1026,7 @@ export class CardRepository {
     }
 
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date
       FROM cards
     `)
 
@@ -875,7 +1041,7 @@ export class CardRepository {
   ): void {
     const statement = this.db.prepare(`
       UPDATE cards
-      SET mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced'
+      SET mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = 'synced', buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?
       WHERE id = ?
     `)
 
@@ -899,6 +1065,9 @@ export class CardRepository {
         this.serializeDailyAmounts(nextDailyAmounts.values),
         nextDailyAmounts.utcDate,
         updatedAt,
+        this.nextMaximum(card.buy_price_safe, card.buy_price_safe_max_observed, mexcPrice),
+        this.nextMaximum(card.buy_price_risk, card.buy_price_risk_max_observed, mexcPrice),
+        this.nextMinimum(card.sell_price, card.sell_price_min_observed, mexcPrice),
         card.id
       )
     }
@@ -1204,6 +1373,22 @@ export class CardRepository {
       values: [amount24, ...currentValues].slice(0, 90),
       utcDate
     }
+  }
+
+  private nextMaximum(level: number | null, currentMaximum: number | null, marketPrice: number): number | null {
+    if (level === null) {
+      return null
+    }
+
+    return Math.max(level, currentMaximum ?? level, marketPrice)
+  }
+
+  private nextMinimum(level: number | null, currentMinimum: number | null, marketPrice: number): number | null {
+    if (level === null) {
+      return null
+    }
+
+    return Math.min(level, currentMinimum ?? level, marketPrice)
   }
 
   private serializeDailyAmounts(values: number[] | null): string | null {

@@ -17,7 +17,7 @@ Current price sync uses one public MEXC futures endpoint:
 - `GET /api/v1/contract/ticker`
 - `GET /api/v1/contract/kline/{symbol}?interval=Day1`
 
-Manual futures import also uses:
+USDT contract catalog sync uses:
 
 - `GET /api/v1/contract/detail/country`
 
@@ -57,6 +57,10 @@ Rules adopted in this project:
 
 ## Sync behavior
 
+- On the first backend launch, the contract catalog is fetched immediately and missing cards are created.
+- The catalog is reconciled every 7 days; new USDT listings are added and delisted contracts are removed.
+- The last successful catalog sync timestamp is persisted in SQLite across backend restarts.
+- An empty or failed catalog response never deletes local cards and is retried after 1 hour.
 - One sync runs immediately when the backend starts.
 - After startup, the scheduler runs every 5 minutes.
 - Only one sync may run at a time.

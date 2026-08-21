@@ -6,6 +6,9 @@ export interface Card {
   buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
+  buyPriceSafeMaxIncreasePercent: number | null
+  buyPriceRiskMaxIncreasePercent: number | null
+  sellPriceMaxDecreasePercent: number | null
   createdAt: string
   mexcPrice: number | null
   mexcAvgDailyVolume3m: number | null
@@ -56,6 +59,9 @@ export interface StoredCard {
   buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
+  buyPriceSafeMaxObserved: number | null
+  buyPriceRiskMaxObserved: number | null
+  sellPriceMinObserved: number | null
   createdAt: string
   mexcPrice: number | null
   mexcAmount24h: number | null
