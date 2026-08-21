@@ -3,10 +3,18 @@ import test from 'node:test'
 
 import { CardRepository } from '../repository.js'
 import { TelegramBotService } from './telegram-bot-service.js'
-import type { TelegramClient, TelegramUpdate } from '../integrations/telegram/client.js'
+import type {
+  TelegramClient,
+  TelegramSendMessageOptions,
+  TelegramUpdate,
+} from '../integrations/telegram/client.js'
 
 class TelegramClientMock {
-  readonly messages: Array<{ chatId: string; text: string }> = []
+  readonly messages: Array<{
+    chatId: string
+    text: string
+    options?: TelegramSendMessageOptions
+  }> = []
 
   async deleteWebhook(): Promise<void> {}
 
@@ -14,8 +22,12 @@ class TelegramClientMock {
     return []
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
-    this.messages.push({ chatId, text })
+  async sendMessage(
+    chatId: string,
+    text: string,
+    options?: TelegramSendMessageOptions,
+  ): Promise<void> {
+    this.messages.push({ chatId, text, options })
   }
 }
 
@@ -122,6 +134,16 @@ test('updates threshold and sends grouped notifications above subscriber minimum
   assert.equal(subscriber?.lastNotifiedPriceEventId, 0)
   assert.match(notification, /BTC: ratio пробил уровни x3, x4\./u)
   assert.match(notification, /Ваш минимальный порог: x3\./u)
+  assert.deepEqual(client.messages.at(-1)?.options?.replyMarkup, {
+    inline_keyboard: [
+      [
+        {
+          text: 'BTC',
+          copy_text: { text: 'BTC' }
+        }
+      ]
+    ]
+  })
 })
 
 test('sends price-level notifications and advances the price-event cursor', async (t) => {
@@ -168,6 +190,16 @@ test('sends price-level notifications and advances the price-event cursor', asyn
   assert.equal(subscriber?.lastNotifiedPriceEventId, 2)
   assert.match(notification, /BTC \[card #1\]:/u)
   assert.match(notification, /buyPriceSafe 110, buyPriceRisk 120/u)
+  assert.deepEqual(client.messages.at(-1)?.options?.replyMarkup, {
+    inline_keyboard: [
+      [
+        {
+          text: 'BTC',
+          copy_text: { text: 'BTC' }
+        }
+      ]
+    ]
+  })
 })
 
 test('disables notifications after /stop', async (t) => {

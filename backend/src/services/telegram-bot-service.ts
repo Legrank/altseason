@@ -6,6 +6,7 @@ import type {
 } from '../types.js'
 import {
   TelegramClient,
+  type TelegramInlineKeyboardMarkup,
   type TelegramUpdate,
   type TelegramUser,
 } from '../integrations/telegram/client.js'
@@ -252,6 +253,7 @@ export class TelegramBotService {
                   matchingThresholds,
                   subscriber.minThreshold,
                 ),
+                { replyMarkup: createCopySymbolMarkup(groupedEvent.symbol) },
               )
             } catch (error) {
               this.logger.error(
@@ -278,6 +280,7 @@ export class TelegramBotService {
             await this.client.sendMessage(
               subscriber.chatId,
               this.formatPriceLevelNotificationMessage(groupedEvent),
+              { replyMarkup: createCopySymbolMarkup(groupedEvent.symbol) },
             )
           } catch (error) {
             this.logger.error(
@@ -442,6 +445,7 @@ export class TelegramBotService {
       event.crossedThresholdCount > 1
         ? `За одно обновление пройдено уровней: ${event.crossedThresholdCount}.`
         : null,
+      `Ваш минимальный порог: x${minThreshold}.`,
     ]
       .filter((line): line is string => line !== null)
       .join('\n')
@@ -531,6 +535,21 @@ function formatPrice(value: number): string {
   return Number.isInteger(value)
     ? value.toString()
     : value.toFixed(8).replace(/0+$/u, '').replace(/\.$/u, '')
+}
+
+function createCopySymbolMarkup(
+  symbol: string,
+): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: symbol,
+          copy_text: { text: symbol },
+        },
+      ],
+    ],
+  }
 }
 
 async function sleep(ms: number): Promise<void> {

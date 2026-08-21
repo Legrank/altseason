@@ -40,6 +40,22 @@ interface TelegramClientOptions {
   baseUrl?: string
 }
 
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: Array<
+    Array<{
+      text: string
+      copy_text: {
+        text: string
+      }
+    }>
+  >
+}
+
+export interface TelegramSendMessageOptions {
+  signal?: AbortSignal
+  replyMarkup?: TelegramInlineKeyboardMarkup
+}
+
 export class TelegramClient {
   private readonly fetchImpl: typeof fetch
   private readonly baseUrl: string
@@ -69,15 +85,27 @@ export class TelegramClient {
     })
   }
 
-  async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<void> {
+  async sendMessage(
+    chatId: string,
+    text: string,
+    optionsOrSignal: TelegramSendMessageOptions | AbortSignal = {},
+  ): Promise<void> {
+    const options =
+      optionsOrSignal instanceof AbortSignal
+        ? { signal: optionsOrSignal }
+        : optionsOrSignal
+
     await this.request('sendMessage', {
       method: 'POST',
       body: JSON.stringify({
         chat_id: chatId,
         text,
-        disable_web_page_preview: true
+        disable_web_page_preview: true,
+        ...(options.replyMarkup
+          ? { reply_markup: options.replyMarkup }
+          : {}),
       }),
-      signal
+      signal: options.signal,
     })
   }
 
