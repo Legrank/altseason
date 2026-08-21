@@ -29,6 +29,16 @@ Single-user MVP for managing crypto cards with manual pricing and live MEXC USDT
 
 4. Open `http://localhost:5173`
 
+## Docker production deployment
+
+The production stack contains separate backend and frontend images. SQLite data is stored in the
+named `altseason-data` volume, while the frontend is published only on `127.0.0.1:8081` for a host
+reverse proxy.
+
+```bash
+docker compose up -d --build
+```
+
 ## Telegram Bot
 
 The backend can run a Telegram bot that sends private notifications when a `ratio` level is crossed.
