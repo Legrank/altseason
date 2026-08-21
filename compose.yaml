@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     env_file:
       - path: backend/.env.local
-        required: false
+        required: true
     environment:
       HOST: 0.0.0.0
       PORT: 3001

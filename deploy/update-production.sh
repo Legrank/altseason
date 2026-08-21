@@ -15,6 +15,12 @@ fail() {
   exit 1
 }
 
+env_has_value() {
+  local key="$1"
+
+  tr -d '\r' < "${ENV_FILE}" | grep -Eq "^${key}=[^[:space:]]+$"
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "не найдена команда '$1'."
 }
@@ -34,6 +40,18 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 
 docker compose version >/dev/null 2>&1 ||
   fail "требуется Docker Compose v2 (команда 'docker compose')."
+
+ENV_FILE="${PROJECT_ROOT}/backend/.env.local"
+
+[[ -f "${ENV_FILE}" ]] ||
+  fail "не найден ${ENV_FILE}; обновление без Telegram-конфигурации запрещено."
+
+env_has_value TELEGRAM_BOT_TOKEN ||
+  fail 'в backend/.env.local отсутствует TELEGRAM_BOT_TOKEN.'
+
+if ! env_has_value TELEGRAM_ALLOWED_USER_IDS && ! env_has_value TELEGRAM_ALLOWED_USERNAMES; then
+  fail 'в backend/.env.local должен быть заполнен Telegram allowlist.'
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
   fail 'рабочее дерево содержит незакоммиченные изменения. Сохраните или отмените их перед обновлением.'
