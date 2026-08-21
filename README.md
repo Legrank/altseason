@@ -39,6 +39,24 @@ reverse proxy.
 docker compose up -d --build
 ```
 
+### Updating production
+
+Run the update script from any directory inside the production server:
+
+```bash
+bash /path/to/altseason/deploy/update-production.sh
+```
+
+The script requires a clean Git working tree and a configured upstream branch. It performs a
+fast-forward-only pull, validates the Compose configuration, builds fresh images, recreates the
+containers, and waits for the backend health check. The named SQLite data volume is preserved.
+
+The health-check timeout is 120 seconds by default and can be changed when needed:
+
+```bash
+DEPLOY_WAIT_TIMEOUT=180 bash /path/to/altseason/deploy/update-production.sh
+```
+
 ### Production authentication
 
 The public site and its API are protected by HTTP Basic Authentication in the host Nginx config.
