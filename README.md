@@ -182,3 +182,7 @@ All MEXC requests must go through the centralized client in `backend/src/integra
 Do not call MEXC directly from routes, services, or frontend code.
 
 Detailed integration rules and rate-limit notes are documented in [docs/mexc.md](/C:/Users/User/Documents/altseason/docs/mexc.md).
+
+## Logs
+
+docker logs -f altseason-backend-1
