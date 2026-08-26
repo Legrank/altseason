@@ -79,7 +79,7 @@ button {
 
 .view-switcher {
   display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 6px;
   gap: 6px;
   border-radius: 18px;
@@ -170,6 +170,12 @@ button {
   gap: 20px;
 }
 
+.statistics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
 .signal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -187,6 +193,133 @@ button {
   display: grid;
   gap: 22px;
   margin-top: 26px;
+}
+
+.statistics-screen {
+  display: grid;
+  gap: 22px;
+  margin-top: 26px;
+}
+
+.statistics-summary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.status-filter {
+  display: inline-flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 15px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.status-filter button {
+  border: 0;
+  border-radius: 11px;
+  padding: 9px 12px;
+  color: rgba(247, 241, 232, 0.72);
+  background: transparent;
+}
+
+.status-filter button.active {
+  color: #17110d;
+  background: #ff9a3d;
+  font-weight: 700;
+}
+
+.statistic-card {
+  display: grid;
+  gap: 22px;
+  padding: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(0, 184, 148, 0.13), transparent 34%),
+    rgba(17, 17, 17, 0.48);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
+}
+
+.statistic-card.closed {
+  background: rgba(17, 17, 17, 0.48);
+}
+
+.statistic-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.statistic-card-header h2 {
+  margin: 0;
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.status-badge {
+  display: inline-flex;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status-badge.open {
+  color: #7df2d2;
+  background: rgba(0, 184, 148, 0.15);
+}
+
+.status-badge.closed {
+  color: rgba(247, 241, 232, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.statistic-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.statistic-metrics > div {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.statistic-metrics dt {
+  color: rgba(247, 241, 232, 0.62);
+  font-size: 0.82rem;
+}
+
+.statistic-metrics dd {
+  margin: 7px 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.statistic-performance dd {
+  color: #8ef4d7;
+}
+
+.statistic-timeline {
+  display: grid;
+  gap: 7px;
+  color: rgba(247, 241, 232, 0.68);
+  font-size: 0.88rem;
+}
+
+.statistic-timeline p {
+  margin: 0;
+}
+
+.statistic-timeline time {
+  color: rgba(247, 241, 232, 0.92);
 }
 
 .signal-view-switcher {
@@ -727,6 +860,10 @@ button {
   .hero h1 {
     max-width: none;
   }
+
+  .statistics-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -747,6 +884,19 @@ button {
   .modal-actions > button,
   .hero-actions > .primary-button {
     width: 100%;
+  }
+
+  .view-switcher {
+    grid-template-columns: 1fr;
+  }
+
+  .status-filter {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .statistic-metrics {
+    grid-template-columns: 1fr;
   }
 
   .event-time,

@@ -9,6 +9,7 @@ import type {
   PriceLevelEvent,
   PriceLevelEventDirection,
   PriceLevelEventKind,
+  PriceSignalStatistic,
   RatioThresholdEvent,
   StoredCard,
   TelegramSubscriber
@@ -81,6 +82,19 @@ interface PriceLevelEventRow {
   trigger_price: number
   market_price: number
   event_at: string
+}
+
+interface PriceSignalStatisticRow {
+  id: number
+  symbol: string
+  kind: PriceLevelEventKind
+  direction: PriceLevelEventDirection
+  level_price: number
+  signal_price: number
+  extreme_price: number
+  opened_at: string
+  closed_at: string | null
+  close_price: number | null
 }
 
 interface ColumnInfoRow {
@@ -427,6 +441,18 @@ export class CardRepository {
     return row?.id ?? 0
   }
 
+  listPriceSignalStatistics(): PriceSignalStatistic[] {
+    const statement = this.db.prepare(`
+      SELECT id, symbol, kind, direction, level_price, signal_price, extreme_price, opened_at, closed_at, close_price
+      FROM price_signal_statistics
+      ORDER BY opened_at DESC, id DESC
+    `)
+
+    return (statement.all() as unknown as PriceSignalStatisticRow[]).map((row) =>
+      this.mapPriceSignalStatisticRow(row)
+    )
+  }
+
   getTelegramSubscriber(chatId: string): TelegramSubscriber | null {
     const row = this.db
       .prepare(`
@@ -569,6 +595,7 @@ export class CardRepository {
     }
 
     this.withTransaction(() => {
+      this.updateOpenPriceSignalStatistics(symbol, mexcPrice, updatedAt)
       this.applySyncedMexcRows(cards, mexcPrice, updatedAt, options)
       const utcDate = options?.utcDate ?? updatedAt.slice(0, 10)
 
@@ -623,12 +650,19 @@ export class CardRepository {
         WHERE id = ?
       `)
 
+      const updatedStatisticSymbols = new Set<string>()
+
       for (const card of cards) {
         const marketSnapshot = snapshot.get(`${card.symbol}_USDT`)
 
         if (!marketSnapshot) {
           markNotFoundStatement.run(card.id)
           continue
+        }
+
+        if (!updatedStatisticSymbols.has(card.symbol)) {
+          this.updateOpenPriceSignalStatistics(card.symbol, marketSnapshot.lastPrice, updatedAt)
+          updatedStatisticSymbols.add(card.symbol)
         }
 
         const previousDailyAmounts = this.parseDailyAmounts(card.mexc_daily_amounts_3m)
@@ -758,6 +792,21 @@ export class CardRepository {
     `)
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS price_signal_statistics (
+        id INTEGER PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        level_price REAL NOT NULL,
+        signal_price REAL NOT NULL,
+        extreme_price REAL NOT NULL,
+        opened_at TEXT NOT NULL,
+        closed_at TEXT NULL,
+        close_price REAL NULL
+      )
+    `)
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS app_metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -851,6 +900,9 @@ export class CardRepository {
       CREATE INDEX IF NOT EXISTS idx_ratio_threshold_events_symbol_event_at ON ratio_threshold_events (symbol, event_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_price_level_events_event_at ON price_level_events (event_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_price_level_events_card_kind_day ON price_level_events (card_id, kind, direction, event_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_price_signal_statistics_opened_at ON price_signal_statistics (opened_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_price_signal_statistics_symbol_status ON price_signal_statistics (symbol, closed_at, id DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_price_signal_statistics_open_level ON price_signal_statistics (symbol, kind, level_price) WHERE closed_at IS NULL;
       CREATE INDEX IF NOT EXISTS idx_telegram_subscribers_is_active ON telegram_subscribers (is_active, chat_id);
     `)
   }
@@ -1014,6 +1066,23 @@ export class CardRepository {
     }
   }
 
+  private mapPriceSignalStatisticRow(row: PriceSignalStatisticRow): PriceSignalStatistic {
+    return {
+      id: row.id,
+      symbol: row.symbol,
+      kind: row.kind,
+      direction: row.direction,
+      levelPrice: row.level_price,
+      signalPrice: row.signal_price,
+      extremePrice: row.extreme_price,
+      extremeChangePercent: ((row.extreme_price - row.signal_price) / row.signal_price) * 100,
+      openedAt: row.opened_at,
+      closedAt: row.closed_at,
+      closePrice: row.close_price,
+      status: row.closed_at === null ? 'open' : 'closed'
+    }
+  }
+
   private getCardsForMexcSync(symbol?: string): MexcSyncCardRow[] {
     if (symbol) {
       const statement = this.db.prepare(`
@@ -1095,10 +1164,61 @@ export class CardRepository {
       INSERT INTO price_level_events (card_id, symbol, kind, direction, trigger_price, market_price, event_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
+    const statisticStatement = this.db.prepare(`
+      INSERT OR IGNORE INTO price_signal_statistics (
+        symbol, kind, direction, level_price, signal_price, extreme_price, opened_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
 
     for (const event of events) {
       statement.run(card.id, card.symbol, event.kind, event.direction, event.triggerPrice, marketPrice, eventAt)
+      statisticStatement.run(
+        card.symbol,
+        event.kind,
+        event.direction,
+        event.triggerPrice,
+        marketPrice,
+        marketPrice,
+        eventAt
+      )
     }
+  }
+
+  private updateOpenPriceSignalStatistics(symbol: string, marketPrice: number, updatedAt: string): void {
+    this.db
+      .prepare(`
+        UPDATE price_signal_statistics
+        SET
+          extreme_price = CASE
+            WHEN direction = 'up' THEN MAX(extreme_price, ?)
+            ELSE MIN(extreme_price, ?)
+          END,
+          closed_at = CASE
+            WHEN (direction = 'up' AND (signal_price - ?) / signal_price >= 0.1)
+              OR (direction = 'down' AND (? - signal_price) / signal_price >= 0.1)
+            THEN ?
+            ELSE closed_at
+          END,
+          close_price = CASE
+            WHEN (direction = 'up' AND (signal_price - ?) / signal_price >= 0.1)
+              OR (direction = 'down' AND (? - signal_price) / signal_price >= 0.1)
+            THEN ?
+            ELSE close_price
+          END
+        WHERE symbol = ? AND closed_at IS NULL
+      `)
+      .run(
+        marketPrice,
+        marketPrice,
+        marketPrice,
+        marketPrice,
+        updatedAt,
+        marketPrice,
+        marketPrice,
+        marketPrice,
+        symbol
+      )
   }
 
   private insertPriceLevelEventsForCard(

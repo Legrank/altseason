@@ -101,6 +101,10 @@ export function createApp(
     return ratioThresholdEvents.list(threshold)
   })
 
+  app.get('/api/price-signal-statistics', async () =>
+    repository.listPriceSignalStatistics()
+  )
+
   app.post('/api/cards', async (request, reply) => {
     const payload = normalizePayload(request.body)
 

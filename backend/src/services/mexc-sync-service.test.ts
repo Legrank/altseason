@@ -252,6 +252,92 @@ test('creates a repeated price-level event on a later UTC day after recrossing t
   ])
 })
 
+test('tracks a buy signal statistic, avoids open duplicates, and freezes it after a 10% drop', async (t) => {
+  const repository = new CardRepository(':memory:')
+  repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: 110,
+    buyPriceRisk: null,
+    sellPrice: null
+  })
+  repository.applyMexcPrice('BTC', 100, '2026-06-29T11:55:00.000Z', { utcDate: '2026-06-29' })
+
+  t.after(() => {
+    repository.close()
+  })
+
+  repository.applyMexcPrice('BTC', 115, '2026-06-29T12:00:00.000Z', { utcDate: '2026-06-29' })
+  repository.applyMexcPrice('BTC', 130, '2026-06-29T12:05:00.000Z', { utcDate: '2026-06-29' })
+  repository.applyMexcPrice('BTC', 105, '2026-06-30T11:55:00.000Z', { utcDate: '2026-06-30' })
+  repository.applyMexcPrice('BTC', 111, '2026-06-30T12:00:00.000Z', { utcDate: '2026-06-30' })
+
+  let statistics = repository.listPriceSignalStatistics()
+
+  assert.equal(statistics.length, 1)
+  assert.deepEqual(statistics[0], {
+    id: 1,
+    symbol: 'BTC',
+    kind: 'buyPriceSafe',
+    direction: 'up',
+    levelPrice: 110,
+    signalPrice: 115,
+    extremePrice: 130,
+    extremeChangePercent: ((130 - 115) / 115) * 100,
+    openedAt: '2026-06-29T12:00:00.000Z',
+    closedAt: null,
+    closePrice: null,
+    status: 'open'
+  })
+
+  repository.applyMexcPrice('BTC', 103.5, '2026-06-30T12:05:00.000Z', { utcDate: '2026-06-30' })
+  repository.applyMexcPrice('BTC', 140, '2026-06-30T12:10:00.000Z', { utcDate: '2026-06-30' })
+  statistics = repository.listPriceSignalStatistics()
+
+  assert.equal(statistics.length, 1)
+  assert.equal(statistics[0]?.status, 'closed')
+  assert.equal(statistics[0]?.closedAt, '2026-06-30T12:05:00.000Z')
+  assert.equal(statistics[0]?.closePrice, 103.5)
+  assert.equal(statistics[0]?.extremePrice, 130)
+
+  repository.applyMexcPrice('BTC', 100, '2026-07-01T11:55:00.000Z', { utcDate: '2026-07-01' })
+  repository.applyMexcPrice('BTC', 111, '2026-07-01T12:00:00.000Z', { utcDate: '2026-07-01' })
+  statistics = repository.listPriceSignalStatistics()
+
+  assert.equal(statistics.length, 2)
+  assert.equal(statistics[0]?.status, 'open')
+  assert.equal(statistics[0]?.signalPrice, 111)
+  assert.equal(statistics[1]?.extremePrice, 130)
+})
+
+test('tracks a sell signal minimum and closes it after a 10% rise', () => {
+  const repository = new CardRepository(':memory:')
+  repository.create({
+    symbol: 'ETH',
+    buyPriceSafe: null,
+    buyPriceRisk: null,
+    sellPrice: 100
+  })
+  repository.applyMexcPrice('ETH', 105, '2026-07-01T10:00:00.000Z', { utcDate: '2026-07-01' })
+
+  repository.applyMexcPrice('ETH', 95, '2026-07-01T10:05:00.000Z', { utcDate: '2026-07-01' })
+  repository.applyMexcPrice('ETH', 80, '2026-07-01T10:10:00.000Z', { utcDate: '2026-07-01' })
+  repository.applyMexcPrice('ETH', 104.5, '2026-07-01T10:15:00.000Z', { utcDate: '2026-07-01' })
+
+  const [statistic] = repository.listPriceSignalStatistics()
+
+  assert.equal(statistic?.status, 'closed')
+  assert.equal(statistic?.signalPrice, 95)
+  assert.equal(statistic?.extremePrice, 80)
+  assert.equal(statistic?.extremeChangePercent, ((80 - 95) / 95) * 100)
+  assert.equal(statistic?.closedAt, '2026-07-01T10:15:00.000Z')
+  assert.equal(statistic?.closePrice, 104.5)
+
+  repository.applyMexcPrice('ETH', 70, '2026-07-01T10:20:00.000Z', { utcDate: '2026-07-01' })
+
+  assert.equal(repository.listPriceSignalStatistics()[0]?.extremePrice, 80)
+  repository.close()
+})
+
 test('does not create an event when amount24 is less than twice the latest completed daily volume', async (t) => {
   const repository = new CardRepository(':memory:')
   repository.create(

@@ -40,6 +40,23 @@ export interface PriceLevelEvent {
   eventAt: string
 }
 
+export type PriceSignalStatisticStatus = 'open' | 'closed'
+
+export interface PriceSignalStatistic {
+  id: number
+  symbol: string
+  kind: PriceLevelEventKind
+  direction: PriceLevelEventDirection
+  levelPrice: number
+  signalPrice: number
+  extremePrice: number
+  extremeChangePercent: number
+  openedAt: string
+  closedAt: string | null
+  closePrice: number | null
+  status: PriceSignalStatisticStatus
+}
+
 export interface TelegramSubscriber {
   chatId: string
   userId: string

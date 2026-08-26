@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
-import { cardsApi, ratioThresholdEventsApi } from './api'
+import {
+  cardsApi,
+  priceSignalStatisticsApi,
+  ratioThresholdEventsApi,
+} from './api'
 import CardItem from './components/CardItem.vue'
 import CardModal from './components/CardModal.vue'
+import PriceSignalStatisticCard from './components/PriceSignalStatisticCard.vue'
 import VolumeSignalCard from './components/VolumeSignalCard.vue'
-import type { Card, RatioThresholdEvent } from './types'
+import type { Card, PriceSignalStatistic, RatioThresholdEvent } from './types'
 
-type AppView = 'cards' | 'volume-signals'
+type AppView = 'cards' | 'volume-signals' | 'statistics'
+type StatisticStatusFilter = 'all' | 'open' | 'closed'
 type VolumeSignalsView = 'current-ratios' | 'threshold-events'
 type CardPercentSort =
   | 'default'
@@ -27,6 +33,10 @@ const thresholdEventsThreshold = ref(2)
 const thresholdEvents = ref<RatioThresholdEvent[]>([])
 const thresholdEventsLoading = ref(false)
 const thresholdEventsErrorMessage = ref('')
+const priceSignalStatistics = ref<PriceSignalStatistic[]>([])
+const statisticsLoading = ref(false)
+const statisticsErrorMessage = ref('')
+const statisticStatusFilter = ref<StatisticStatusFilter>('all')
 const volumeSignalsView = ref<VolumeSignalsView>('current-ratios')
 const cardSearchQuery = ref('')
 const cardPercentSort = ref<CardPercentSort>('default')
@@ -175,6 +185,20 @@ const highlightedThresholdEvents = computed(() =>
   thresholdEvents.value.filter((event) => event.crossedThresholdCount >= 3),
 )
 
+const filteredPriceSignalStatistics = computed(() =>
+  statisticStatusFilter.value === 'all'
+    ? priceSignalStatistics.value
+    : priceSignalStatistics.value.filter(
+        (statistic) => statistic.status === statisticStatusFilter.value,
+      ),
+)
+
+const openStatisticCount = computed(
+  () =>
+    priceSignalStatistics.value.filter((statistic) => statistic.status === 'open')
+      .length,
+)
+
 const latestMexcSyncAt = computed(() =>
   cards.value.reduce<string | null>((latest, card) => {
     if (!card.mexcPriceUpdatedAt) {
@@ -186,12 +210,16 @@ const latestMexcSyncAt = computed(() =>
 )
 
 function syncViewFromHash() {
-  currentView.value =
-    window.location.hash === '#volume-signals' ? 'volume-signals' : 'cards'
+  if (window.location.hash === '#volume-signals') {
+    currentView.value = 'volume-signals'
+    return
+  }
+
+  currentView.value = window.location.hash === '#statistics' ? 'statistics' : 'cards'
 }
 
 function navigateTo(view: AppView) {
-  window.location.hash = view === 'volume-signals' ? 'volume-signals' : 'cards'
+  window.location.hash = view
 }
 
 function formatEventDate(value: string) {
@@ -233,6 +261,23 @@ async function loadThresholdEvents(options?: { background?: boolean }) {
         : 'Failed to load threshold events.'
   } finally {
     thresholdEventsLoading.value = false
+  }
+}
+
+async function loadPriceSignalStatistics(options?: { background?: boolean }) {
+  if (!options?.background) {
+    statisticsLoading.value = true
+  }
+
+  statisticsErrorMessage.value = ''
+
+  try {
+    priceSignalStatistics.value = await priceSignalStatisticsApi.list()
+  } catch (error) {
+    statisticsErrorMessage.value =
+      error instanceof Error ? error.message : 'Failed to load signal statistics.'
+  } finally {
+    statisticsLoading.value = false
   }
 }
 
@@ -294,6 +339,7 @@ function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
     void loadCards({ background: true })
     void loadThresholdEvents({ background: true })
+    void loadPriceSignalStatistics({ background: true })
   }
 }
 
@@ -305,9 +351,11 @@ onMounted(() => {
   syncViewFromHash()
   void loadCards()
   void loadThresholdEvents()
+  void loadPriceSignalStatistics()
   refreshTimer.value = window.setInterval(() => {
     void loadCards({ background: true })
     void loadThresholdEvents({ background: true })
+    void loadPriceSignalStatistics({ background: true })
   }, 60_000)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   window.addEventListener('hashchange', syncViewFromHash)
@@ -353,6 +401,14 @@ onUnmounted(() => {
             >
               Volume screen
             </button>
+            <button
+              type="button"
+              class="view-tab"
+              :class="{ active: currentView === 'statistics' }"
+              @click="navigateTo('statistics')"
+            >
+              Statistics
+            </button>
           </div>
         </div>
       </section>
@@ -363,7 +419,10 @@ onUnmounted(() => {
         <p>Loading cards...</p>
       </section>
 
-      <section v-else-if="cards.length === 0" class="empty-state">
+      <section
+        v-else-if="currentView !== 'statistics' && cards.length === 0"
+        class="empty-state"
+      >
         <p class="empty-title">No cards saved yet</p>
         <p class="empty-copy">
           Cards will appear here after the automated list update.
@@ -462,7 +521,7 @@ onUnmounted(() => {
         </section>
       </section>
 
-      <section v-else class="signal-screen">
+      <section v-else-if="currentView === 'volume-signals'" class="signal-screen">
         <div
           class="signal-view-switcher"
           role="tablist"
@@ -662,6 +721,55 @@ onUnmounted(() => {
             </article>
           </section>
         </template>
+      </section>
+
+      <section v-else class="statistics-screen">
+        <div class="signal-filter-panel statistics-summary">
+          <div>
+            <p class="label">Price-level signal history</p>
+            <p class="filter-value">
+              {{ openStatisticCount }} open of {{ priceSignalStatistics.length }} signals
+            </p>
+          </div>
+
+          <div class="status-filter" role="group" aria-label="Signal status filter">
+            <button
+              v-for="status in (['all', 'open', 'closed'] as const)"
+              :key="status"
+              type="button"
+              :class="{ active: statisticStatusFilter === status }"
+              @click="statisticStatusFilter = status"
+            >
+              {{ status[0].toUpperCase() + status.slice(1) }}
+            </button>
+          </div>
+        </div>
+
+        <p v-if="statisticsErrorMessage" class="banner banner-error signal-banner">
+          {{ statisticsErrorMessage }}
+        </p>
+
+        <section v-if="statisticsLoading" class="empty-state signal-empty">
+          <p>Loading signal statistics...</p>
+        </section>
+
+        <section
+          v-else-if="filteredPriceSignalStatistics.length === 0"
+          class="empty-state signal-empty"
+        >
+          <p class="empty-title">No signal statistics yet</p>
+          <p class="empty-copy">
+            A card will appear when the market price crosses a saved price level.
+          </p>
+        </section>
+
+        <section v-else class="statistics-grid">
+          <PriceSignalStatisticCard
+            v-for="statistic in filteredPriceSignalStatistics"
+            :key="statistic.id"
+            :statistic="statistic"
+          />
+        </section>
       </section>
     </main>
 

@@ -100,6 +100,46 @@ test('rejects invalid ratio threshold event query values', async (t) => {
   assert.equal(invalidResponses[2].statusCode, 400)
 })
 
+test('lists price signal statistics', async (t) => {
+  const { app, repository } = createTestContext()
+  repository.create({
+    symbol: 'BTC',
+    buyPriceSafe: 110,
+    buyPriceRisk: null,
+    sellPrice: null
+  })
+  repository.applyMexcPrice('BTC', 100, '2026-06-29T11:55:00.000Z', { utcDate: '2026-06-29' })
+  repository.applyMexcPrice('BTC', 115, '2026-06-29T12:00:00.000Z', { utcDate: '2026-06-29' })
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/api/price-signal-statistics'
+  })
+
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), [
+    {
+      id: 1,
+      symbol: 'BTC',
+      kind: 'buyPriceSafe',
+      direction: 'up',
+      levelPrice: 110,
+      signalPrice: 115,
+      extremePrice: 115,
+      extremeChangePercent: 0,
+      openedAt: '2026-06-29T12:00:00.000Z',
+      closedAt: null,
+      closePrice: null,
+      status: 'open'
+    }
+  ])
+})
+
 test('creates a card with computed average daily volume and returns it in the list', async (t) => {
   const { app, repository } = createTestContext({
     async getUsdtFuturesDailyAmounts() {

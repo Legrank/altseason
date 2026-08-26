@@ -25,6 +25,25 @@ export interface RatioThresholdEvent {
   crossedThresholdCount: number
 }
 
+export type PriceLevelEventKind = 'buyPriceSafe' | 'buyPriceRisk' | 'sellPrice'
+export type PriceLevelEventDirection = 'up' | 'down'
+export type PriceSignalStatisticStatus = 'open' | 'closed'
+
+export interface PriceSignalStatistic {
+  id: number
+  symbol: string
+  kind: PriceLevelEventKind
+  direction: PriceLevelEventDirection
+  levelPrice: number
+  signalPrice: number
+  extremePrice: number
+  extremeChangePercent: number
+  openedAt: string
+  closedAt: string | null
+  closePrice: number | null
+  status: PriceSignalStatisticStatus
+}
+
 export interface CardPayload {
   symbol: string
   buyPriceSafe: number | null
