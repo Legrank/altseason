@@ -32,7 +32,13 @@ One-off maintenance scripts (write directly to `backend/data/cards.sqlite`, hit 
 ```bash
 cd backend && npm run import:usdt-futures            # add cards for every current USDT contract
 cd backend && npm run backfill:mexc-daily-amounts    # fill missing 90-day volume history, rate-limited
+cd backend && npm run sync:exchange-listings         # refresh "listed on" data from every exchange API
+cd backend && npm run sync:coingecko-listings        # one CoinGecko rotation slice (accepts [db] [budget])
 ```
+
+Both listing scripts take an optional SQLite path as the first argument (default `backend/data/cards.sqlite`),
+so they can be pointed at a scratch copy. `sync:exchange-listings` prints per-venue success/failure, which is
+the way to check whether a host is geo-blocked by Binance or Bybit.
 
 There is no linter or formatter configured. Node 22+ is required (`node:sqlite`, `--experimental-sqlite`).
 Tests use the built-in `node:test` runner with temp SQLite files or `:memory:` — no test framework.
@@ -68,6 +74,17 @@ graceful shutdown. `app.ts` (`createApp`) is dependency-injected and used direct
   `minThreshold`. User-facing bot copy is in Russian.
 - **`services/robust-average.ts`** — shared IQR-outlier-filtered mean (upper bound `Q3 + 1.5*IQR`)
   used for the "average daily volume" everywhere. Used by both repository and card-service.
+- **`services/exchange-listing-sync-service.ts`** — every 24h (and after each contract catalog sync)
+  reads the public instrument catalog of Binance, Bybit, OKX, Gate, KuCoin and Bitget and records which
+  venues list each tracked coin, spot and USDT perpetual. Each venue is replaced independently, so a
+  failing or geo-blocked venue never clears the others, and an empty/non-overlapping response is
+  rejected rather than written.
+- **`services/coingecko-listing-sync-service.ts`** — every 24h, adds venues the direct clients do not
+  cover. CoinGecko bills per call (10k/month free), so a run spends a fixed coin budget on the cards
+  with the oldest aggregator data and the catalog rotates through over several days.
+- **`services/symbol-aliases.ts`** — expands a symbol into itself plus its unscaled ticker
+  (`1000BONK` -> `BONK`), stripping only the longest matching scale prefix. Used on both sides of
+  every cross-venue symbol comparison.
 - **`services/ratio-threshold-event-service.ts`** — thin read wrapper for `GET /api/ratio-threshold-events`.
 
 ### MEXC integration boundary (enforced rule)
@@ -78,6 +95,18 @@ base URL, endpoint paths, response-envelope validation, and 429/418 `Retry-After
 (after a rate-limit hit it fails fast instead of retrying). See [docs/mexc.md](docs/mexc.md) for the
 full rules, endpoint list, rate-limit policy, and exact sync semantics — keep it in sync when changing
 sync behavior.
+
+### Exchange listing boundary (enforced rule)
+
+All non-MEXC exchange HTTP access goes through `backend/src/integrations/exchanges/`, and all
+CoinGecko access through `backend/src/integrations/coingecko/`. Nothing else may call an exchange or
+aggregator host directly. `ExchangeHttpClient` owns the shared transport and the same 429/418
+cooldown policy as `MexcClient`. See [docs/exchanges.md](docs/exchanges.md) for the endpoint list,
+per-venue payload quirks, geo-blocking, symbol matching and sync semantics — keep it in sync when
+changing listing behavior.
+
+Binance (451) and Bybit (403) geo-block some regions. `EXCHANGE_LISTING_DISABLED_EXCHANGES` skips
+venues a host cannot reach.
 
 ### Signal semantics worth knowing before touching sync code
 
@@ -111,4 +140,6 @@ host nginx (`deploy/nginx/alt.legrank.ru.conf`). Backend logs: `docker logs -f a
 
 Backend env vars: `PORT` (3001), `HOST` (0.0.0.0), `LOG_LEVEL`, `TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_ALLOWED_USERNAMES`, `TELEGRAM_DEFAULT_MIN_THRESHOLD` (2..10).
-`config.ts` also loads `backend/.env.local` / `backend/.env` manually (no dotenv dep).
+`EXCHANGE_LISTING_DISABLED_EXCHANGES` (csv of exchange ids), `COINGECKO_ENABLED` (`false` disables),
+`COINGECKO_API_KEY`, `COINGECKO_API_KEY_KIND` (`demo` | `pro`), `COINGECKO_DAILY_COIN_BUDGET` (1..1000,
+default 100). `config.ts` also loads `backend/.env.local` / `backend/.env` manually (no dotenv dep).

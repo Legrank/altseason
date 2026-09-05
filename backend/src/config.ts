@@ -7,6 +7,13 @@ export interface TelegramBotConfig {
   defaultMinThreshold: number
 }
 
+export interface CoingeckoConfig {
+  enabled: boolean
+  apiKey: string | null
+  apiKeyKind: 'demo' | 'pro'
+  dailyCoinBudget: number
+}
+
 export function loadOptionalEnvFiles(paths: string[]): void {
   for (const path of paths) {
     if (!existsSync(path)) {
@@ -51,6 +58,33 @@ export function readTelegramBotConfig(): TelegramBotConfig | null {
     allowedUsernames: parseCsvSet(process.env.TELEGRAM_ALLOWED_USERNAMES, true),
     defaultMinThreshold: parseThreshold(process.env.TELEGRAM_DEFAULT_MIN_THRESHOLD)
   }
+}
+
+export function readCoingeckoConfig(): CoingeckoConfig {
+  return {
+    enabled: process.env.COINGECKO_ENABLED?.trim().toLowerCase() !== 'false',
+    apiKey: process.env.COINGECKO_API_KEY?.trim() || null,
+    apiKeyKind: process.env.COINGECKO_API_KEY_KIND?.trim().toLowerCase() === 'pro' ? 'pro' : 'demo',
+    dailyCoinBudget: parseCoinBudget(process.env.COINGECKO_DAILY_COIN_BUDGET)
+  }
+}
+
+/**
+ * Exchange ids the listing sync must skip, e.g. venues that geo-block the deployment host.
+ */
+export function readDisabledExchangeIds(): Set<string> {
+  return new Set(
+    (process.env.EXCHANGE_LISTING_DISABLED_EXCHANGES ?? '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
+  )
+}
+
+function parseCoinBudget(value: string | undefined): number {
+  const parsed = Number(value)
+
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 1000 ? parsed : 100
 }
 
 function parseCsvSet(value: string | undefined, normalizeUsername = false): Set<string> {

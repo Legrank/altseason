@@ -161,3 +161,106 @@ test('recomputes average daily volume when symbol changes', async (t) => {
   assert.equal(updated?.mexcVolume24h, null)
   assert.deepEqual(repository.getById(existing.id)?.mexcDailyAmounts3m, [200, 220, 240])
 })
+
+test('groups a card exchange listings into one entry per venue', async (t) => {
+  const repository = new CardRepository(':memory:')
+
+  t.after(() => {
+    repository.close()
+  })
+
+  repository.create({ symbol: 'BTC', buyPriceSafe: null, buyPriceRisk: null, sellPrice: null })
+  repository.replaceExchangeListings(
+    'gate',
+    'Gate',
+    [
+      { symbol: 'BTC', marketType: 'spot', pair: 'BTC_USDT', tradeUrl: 'https://gate/spot' },
+      { symbol: 'BTC', marketType: 'futures', pair: 'BTC_USDT', tradeUrl: 'https://gate/futures' }
+    ],
+    '2026-09-05T10:00:00.000Z'
+  )
+
+  const [card] = new CardService({ repository }).list()
+
+  assert.deepEqual(card?.exchanges, [
+    {
+      exchange: 'gate',
+      label: 'Gate',
+      marketTypes: ['spot', 'futures'],
+      source: 'exchange',
+      tradeUrl: 'https://gate/spot'
+    }
+  ])
+})
+
+test('a venue read directly outranks the same venue reported by the aggregator', async (t) => {
+  const repository = new CardRepository(':memory:')
+
+  t.after(() => {
+    repository.close()
+  })
+
+  repository.create({ symbol: 'BTC', buyPriceSafe: null, buyPriceRisk: null, sellPrice: null })
+  repository.replaceExchangeListings(
+    'gate',
+    'Gate',
+    [{ symbol: 'BTC', marketType: 'futures', pair: 'BTC_USDT', tradeUrl: 'https://gate/futures' }],
+    '2026-09-05T10:00:00.000Z'
+  )
+  repository.replaceCoingeckoListings(
+    'BTC',
+    'bitcoin',
+    [
+      {
+        exchange: 'gate',
+        label: 'Gate.io',
+        marketType: 'spot',
+        pair: 'BTC/USDT',
+        tradeUrl: null,
+        volumeUsd24h: 10
+      },
+      {
+        exchange: 'kraken',
+        label: 'Kraken',
+        marketType: 'spot',
+        pair: 'BTC/USD',
+        tradeUrl: null,
+        volumeUsd24h: 20
+      }
+    ],
+    '2026-09-05T10:00:00.000Z'
+  )
+
+  const [card] = new CardService({ repository }).list()
+
+  assert.deepEqual(card?.exchanges, [
+    {
+      exchange: 'gate',
+      label: 'Gate',
+      marketTypes: ['futures'],
+      source: 'exchange',
+      tradeUrl: 'https://gate/futures'
+    },
+    {
+      exchange: 'kraken',
+      label: 'Kraken',
+      marketTypes: ['spot'],
+      source: 'coingecko',
+      tradeUrl: null
+    }
+  ])
+})
+
+test('reports an empty exchange list for a coin that trades nowhere else', async (t) => {
+  const repository = new CardRepository(':memory:')
+
+  t.after(() => {
+    repository.close()
+  })
+
+  repository.create({ symbol: 'ARKK', buyPriceSafe: null, buyPriceRisk: null, sellPrice: null })
+
+  const [card] = new CardService({ repository }).list()
+
+  assert.deepEqual(card?.exchanges, [])
+})

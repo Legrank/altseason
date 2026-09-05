@@ -17,6 +17,7 @@ export interface Card {
   mexcVolume24h: number | null
   mexcPriceUpdatedAt: string | null
   mexcSyncStatus: MexcSyncStatus
+  exchanges: CardExchange[]
 }
 
 export interface RatioThresholdEvent {
@@ -99,4 +100,45 @@ export interface CardPayload {
   sellPrice: number | null
   youtubeUrl?: string | null
   telegramPostUrl?: string | null
+}
+
+export type ExchangeMarketType = 'spot' | 'futures'
+
+export type CoinListingSource = 'exchange' | 'coingecko'
+
+export interface CardExchange {
+  exchange: string
+  label: string
+  marketTypes: ExchangeMarketType[]
+  source: CoinListingSource
+  tradeUrl: string | null
+}
+
+export interface StoredCoinListing {
+  symbol: string
+  exchange: string
+  label: string
+  marketType: ExchangeMarketType
+  pair: string
+  source: CoinListingSource
+  tradeUrl: string | null
+  volumeUsd24h: number | null
+  updatedAt: string
+}
+
+export interface CoinListingInput {
+  symbol: string
+  marketType: ExchangeMarketType
+  pair: string
+  tradeUrl: string | null
+  volumeUsd24h?: number | null
+}
+
+export interface CoingeckoListingInput {
+  exchange: string
+  label: string
+  marketType: ExchangeMarketType
+  pair: string
+  tradeUrl: string | null
+  volumeUsd24h: number | null
 }
