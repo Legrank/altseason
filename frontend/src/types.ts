@@ -1,5 +1,17 @@
 export type MexcSyncStatus = 'pending' | 'synced' | 'not_found' | 'error'
 
+export type ExchangeMarketType = 'spot' | 'futures'
+
+export type CoinListingSource = 'exchange' | 'coingecko'
+
+export interface CardExchange {
+  exchange: string
+  label: string
+  marketTypes: ExchangeMarketType[]
+  source: CoinListingSource
+  tradeUrl: string | null
+}
+
 export interface Card {
   id: number
   symbol: string
@@ -9,12 +21,15 @@ export interface Card {
   buyPriceSafeMaxIncreasePercent: number | null
   buyPriceRiskMaxIncreasePercent: number | null
   sellPriceMaxDecreasePercent: number | null
+  youtubeUrl: string | null
+  telegramPostUrl: string | null
   createdAt: string
   mexcPrice: number | null
   mexcAvgDailyVolume3m: number | null
   mexcVolume24h: number | null
   mexcPriceUpdatedAt: string | null
   mexcSyncStatus: MexcSyncStatus
+  exchanges: CardExchange[]
 }
 
 export interface RatioThresholdEvent {
@@ -49,4 +64,6 @@ export interface CardPayload {
   buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
+  youtubeUrl: string | null
+  telegramPostUrl: string | null
 }

@@ -3,8 +3,13 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { calculateRobustAverage } from './services/robust-average.js'
+import { normalizeSymbol } from './services/symbol-aliases.js'
 import type {
   CardPayload,
+  CoinListingInput,
+  CoinListingSource,
+  CoingeckoListingInput,
+  ExchangeMarketType,
   MexcSyncStatus,
   PriceLevelEvent,
   PriceLevelEventDirection,
@@ -12,6 +17,7 @@ import type {
   PriceSignalStatistic,
   RatioThresholdEvent,
   StoredCard,
+  StoredCoinListing,
   TelegramSubscriber
 } from './types.js'
 
@@ -28,6 +34,8 @@ interface CardRow {
   buy_price_safe_max_observed: number | null
   buy_price_risk_max_observed: number | null
   sell_price_min_observed: number | null
+  youtube_url: string | null
+  telegram_post_url: string | null
   created_at: string
   mexc_price: number | null
   mexc_amount_24h: number | null
@@ -97,6 +105,18 @@ interface PriceSignalStatisticRow {
   close_price: number | null
 }
 
+interface CoinListingRow {
+  symbol: string
+  exchange: string
+  label: string
+  market_type: ExchangeMarketType
+  pair: string
+  source: CoinListingSource
+  trade_url: string | null
+  volume_usd_24h: number | null
+  updated_at: string
+}
+
 interface ColumnInfoRow {
   name: string
   notnull: number
@@ -108,6 +128,7 @@ export interface UsdtContractCardSyncResult {
 }
 
 const USDT_CONTRACT_SYNC_COMPLETED_AT_KEY = 'mexc_usdt_contract_sync_completed_at'
+const EXCHANGE_LISTING_SYNC_COMPLETED_AT_KEY = 'exchange_listing_sync_completed_at'
 
 export class CardRepository {
   private readonly db: DatabaseSync
@@ -127,7 +148,7 @@ export class CardRepository {
 
   list(): StoredCard[] {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, youtube_url, telegram_post_url, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       ORDER BY created_at DESC, id DESC
     `)
@@ -147,9 +168,11 @@ export class CardRepository {
     const mexcAmount24h = options?.mexcAmount24h ?? null
     const mexcDailyAmounts3m = options?.mexcDailyAmounts3m ?? null
     const mexcDailyAmountsUtcDate = options?.mexcDailyAmountsUtcDate ?? null
+    const youtubeUrl = payload.youtubeUrl ?? null
+    const telegramPostUrl = payload.telegramPostUrl ?? null
     const statement = this.db.prepare(`
-      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, youtube_url, telegram_post_url, created_at, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const result = statement.run(
       payload.symbol,
@@ -159,6 +182,8 @@ export class CardRepository {
       payload.buyPriceSafe,
       payload.buyPriceRisk,
       payload.sellPrice,
+      youtubeUrl,
+      telegramPostUrl,
       createdAt,
       mexcAmount24h,
       this.serializeDailyAmounts(mexcDailyAmounts3m),
@@ -175,6 +200,8 @@ export class CardRepository {
       buyPriceSafeMaxObserved: payload.buyPriceSafe,
       buyPriceRiskMaxObserved: payload.buyPriceRisk,
       sellPriceMinObserved: payload.sellPrice,
+      youtubeUrl,
+      telegramPostUrl,
       createdAt,
       mexcPrice: null,
       mexcAmount24h,
@@ -211,6 +238,8 @@ export class CardRepository {
       ? payload.buyPriceRisk
       : existing.buyPriceRiskMaxObserved
     const nextSellPriceMinObserved = sellPriceChanged ? payload.sellPrice : existing.sellPriceMinObserved
+    const nextYoutubeUrl = payload.youtubeUrl ?? null
+    const nextTelegramPostUrl = payload.telegramPostUrl ?? null
     const nextMexcAmount24h =
       options?.mexcAmount24h === undefined
         ? symbolChanged
@@ -226,7 +255,7 @@ export class CardRepository {
 
     const statement = this.db.prepare(`
       UPDATE cards
-      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?, mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
+      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?, youtube_url = ?, telegram_post_url = ?, mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
       WHERE id = ?
     `)
 
@@ -238,6 +267,8 @@ export class CardRepository {
       nextBuyPriceSafeMaxObserved,
       nextBuyPriceRiskMaxObserved,
       nextSellPriceMinObserved,
+      nextYoutubeUrl,
+      nextTelegramPostUrl,
       symbolChanged ? null : existing.mexcPrice,
       nextMexcAmount24h,
       this.serializeDailyAmounts(nextMexcDailyAmounts3m),
@@ -256,6 +287,8 @@ export class CardRepository {
       buyPriceSafeMaxObserved: nextBuyPriceSafeMaxObserved,
       buyPriceRiskMaxObserved: nextBuyPriceRiskMaxObserved,
       sellPriceMinObserved: nextSellPriceMinObserved,
+      youtubeUrl: nextYoutubeUrl,
+      telegramPostUrl: nextTelegramPostUrl,
       mexcPrice: symbolChanged ? null : existing.mexcPrice,
       mexcAmount24h: nextMexcAmount24h,
       mexcDailyAmounts3m: nextMexcDailyAmounts3m,
@@ -349,6 +382,11 @@ export class CardRepository {
         createdCount += 1
       }
 
+      const deleteCoinListings = this.db.prepare('DELETE FROM coin_listings WHERE symbol = ?')
+      const deleteCoingeckoState = this.db.prepare(
+        'DELETE FROM coin_listing_coingecko_state WHERE symbol = ?'
+      )
+
       for (const row of existingRows) {
         if (nextSymbols.has(row.symbol)) {
           continue
@@ -356,6 +394,8 @@ export class CardRepository {
 
         deletePriceEvents.run(row.id)
         deleteRatioEvents.run(row.symbol)
+        deleteCoinListings.run(row.symbol)
+        deleteCoingeckoState.run(row.symbol)
         deleteCard.run(row.id)
         deletedCount += 1
       }
@@ -370,6 +410,221 @@ export class CardRepository {
 
       return { createdCount, deletedCount }
     })
+  }
+
+  getExchangeListingSyncCompletedAt(): string | null {
+    const row = this.db
+      .prepare(`
+        SELECT value
+        FROM app_metadata
+        WHERE key = ?
+      `)
+      .get(EXCHANGE_LISTING_SYNC_COMPLETED_AT_KEY) as { value: string } | undefined
+
+    return row?.value ?? null
+  }
+
+  setExchangeListingSyncCompletedAt(completedAt: string): void {
+    this.db
+      .prepare(`
+        INSERT INTO app_metadata (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `)
+      .run(EXCHANGE_LISTING_SYNC_COMPLETED_AT_KEY, completedAt)
+  }
+
+  /**
+   * Replaces every directly-sourced listing of one exchange in a single transaction.
+   * Scoping the delete to one exchange keeps a failing venue from clearing the others,
+   * and an empty payload is rejected so a blank response can never wipe a catalog.
+   */
+  replaceExchangeListings(
+    exchange: string,
+    label: string,
+    listings: readonly CoinListingInput[],
+    updatedAt: string
+  ): number {
+    const exchangeId = exchange.trim().toLowerCase()
+
+    if (!exchangeId) {
+      throw new Error('Cannot replace exchange listings without an exchange id.')
+    }
+
+    if (listings.length === 0) {
+      throw new Error(`Cannot replace ${exchangeId} listings with an empty listing set.`)
+    }
+
+    return this.withTransaction(() => {
+      this.db
+        .prepare("DELETE FROM coin_listings WHERE exchange = ? AND source = 'exchange'")
+        .run(exchangeId)
+
+      const insert = this.db.prepare(`
+        INSERT INTO coin_listings (symbol, exchange, label, market_type, pair, source, trade_url, volume_usd_24h, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'exchange', ?, ?, ?)
+        ON CONFLICT(symbol, exchange, market_type, source) DO UPDATE SET
+          label = excluded.label,
+          pair = excluded.pair,
+          trade_url = excluded.trade_url,
+          volume_usd_24h = excluded.volume_usd_24h,
+          updated_at = excluded.updated_at
+      `)
+      let writtenCount = 0
+
+      for (const listing of listings) {
+        const symbol = normalizeSymbol(listing.symbol)
+
+        if (!symbol) {
+          continue
+        }
+
+        insert.run(
+          symbol,
+          exchangeId,
+          label,
+          listing.marketType,
+          listing.pair,
+          listing.tradeUrl,
+          listing.volumeUsd24h ?? null,
+          updatedAt
+        )
+        writtenCount += 1
+      }
+
+      return writtenCount
+    })
+  }
+
+  /**
+   * Replaces the aggregator-sourced listings of one card. Unlike the per-exchange
+   * replacement an empty set is valid here: it is the correct answer for a coin that
+   * CoinGecko knows about but that trades nowhere it tracks.
+   */
+  replaceCoingeckoListings(
+    symbol: string,
+    coinId: string | null,
+    listings: readonly CoingeckoListingInput[],
+    syncedAt: string
+  ): number {
+    const normalizedSymbol = normalizeSymbol(symbol)
+
+    if (!normalizedSymbol) {
+      throw new Error('Cannot replace CoinGecko listings without a symbol.')
+    }
+
+    return this.withTransaction(() => {
+      this.db
+        .prepare("DELETE FROM coin_listings WHERE symbol = ? AND source = 'coingecko'")
+        .run(normalizedSymbol)
+
+      const insert = this.db.prepare(`
+        INSERT INTO coin_listings (symbol, exchange, label, market_type, pair, source, trade_url, volume_usd_24h, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'coingecko', ?, ?, ?)
+        ON CONFLICT(symbol, exchange, market_type, source) DO UPDATE SET
+          label = excluded.label,
+          pair = excluded.pair,
+          trade_url = excluded.trade_url,
+          volume_usd_24h = excluded.volume_usd_24h,
+          updated_at = excluded.updated_at
+      `)
+      let writtenCount = 0
+
+      for (const listing of listings) {
+        const exchangeId = listing.exchange.trim().toLowerCase()
+
+        if (!exchangeId) {
+          continue
+        }
+
+        insert.run(
+          normalizedSymbol,
+          exchangeId,
+          listing.label,
+          listing.marketType,
+          listing.pair,
+          listing.tradeUrl,
+          listing.volumeUsd24h,
+          syncedAt
+        )
+        writtenCount += 1
+      }
+
+      this.db
+        .prepare(`
+          INSERT INTO coin_listing_coingecko_state (symbol, coin_id, synced_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(symbol) DO UPDATE SET
+            coin_id = excluded.coin_id,
+            synced_at = excluded.synced_at
+        `)
+        .run(normalizedSymbol, coinId, syncedAt)
+
+      return writtenCount
+    })
+  }
+
+  listCoinListings(): StoredCoinListing[] {
+    const statement = this.db.prepare(`
+      SELECT symbol, exchange, label, market_type, pair, source, trade_url, volume_usd_24h, updated_at
+      FROM coin_listings
+      ORDER BY symbol ASC, exchange ASC, market_type ASC
+    `)
+
+    return (statement.all() as unknown as CoinListingRow[]).map((row) => ({
+      symbol: row.symbol,
+      exchange: row.exchange,
+      label: row.label,
+      marketType: row.market_type,
+      pair: row.pair,
+      source: row.source,
+      tradeUrl: row.trade_url,
+      volumeUsd24h: row.volume_usd_24h,
+      updatedAt: row.updated_at
+    }))
+  }
+
+  listCoinListingsForSymbol(symbol: string): StoredCoinListing[] {
+    const statement = this.db.prepare(`
+      SELECT symbol, exchange, label, market_type, pair, source, trade_url, volume_usd_24h, updated_at
+      FROM coin_listings
+      WHERE symbol = ?
+      ORDER BY exchange ASC, market_type ASC
+    `)
+
+    return (statement.all(normalizeSymbol(symbol)) as unknown as CoinListingRow[]).map((row) => ({
+      symbol: row.symbol,
+      exchange: row.exchange,
+      label: row.label,
+      marketType: row.market_type,
+      pair: row.pair,
+      source: row.source,
+      tradeUrl: row.trade_url,
+      volumeUsd24h: row.volume_usd_24h,
+      updatedAt: row.updated_at
+    }))
+  }
+
+  /**
+   * Cards whose aggregator data is oldest (never-synced first), capped at `limit`.
+   * The CoinGecko sync spends a fixed daily call budget walking this queue, so every
+   * card is refreshed on a rotation instead of the catalog being fetched at once.
+   */
+  getStaleCoingeckoSymbols(limit: number): string[] {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      return []
+    }
+
+    const statement = this.db.prepare(`
+      SELECT cards.symbol AS symbol
+      FROM cards
+      LEFT JOIN coin_listing_coingecko_state AS state ON state.symbol = cards.symbol
+      GROUP BY cards.symbol
+      ORDER BY MIN(COALESCE(state.synced_at, '')) ASC, cards.symbol ASC
+      LIMIT ?
+    `)
+
+    return (statement.all(limit) as unknown as Array<{ symbol: string }>).map((row) => row.symbol)
   }
 
   listRatioThresholdEvents(threshold: number): RatioThresholdEvent[] {
@@ -723,7 +978,7 @@ export class CardRepository {
 
   getById(id: number): StoredCard | null {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, youtube_url, telegram_post_url, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       WHERE id = ?
     `)
@@ -743,6 +998,8 @@ export class CardRepository {
         buy_price_safe_max_observed REAL NULL,
         buy_price_risk_max_observed REAL NULL,
         sell_price_min_observed REAL NULL,
+        youtube_url TEXT NULL,
+        telegram_post_url TEXT NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_amount_24h REAL NULL,
@@ -810,6 +1067,29 @@ export class CardRepository {
       CREATE TABLE IF NOT EXISTS app_metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      )
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS coin_listings (
+        id INTEGER PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        exchange TEXT NOT NULL,
+        label TEXT NOT NULL,
+        market_type TEXT NOT NULL,
+        pair TEXT NOT NULL,
+        source TEXT NOT NULL,
+        trade_url TEXT NULL,
+        volume_usd_24h REAL NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS coin_listing_coingecko_state (
+        symbol TEXT PRIMARY KEY,
+        coin_id TEXT NULL,
+        synced_at TEXT NOT NULL
       )
     `)
 
@@ -881,6 +1161,14 @@ export class CardRepository {
       this.db.exec('UPDATE cards SET sell_price_min_observed = sell_price')
     }
 
+    if (!columns.has('youtube_url')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN youtube_url TEXT NULL')
+    }
+
+    if (!columns.has('telegram_post_url')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN telegram_post_url TEXT NULL')
+    }
+
     if (!telegramSubscriberColumns.has('last_notified_price_event_id')) {
       this.db.exec('ALTER TABLE telegram_subscribers ADD COLUMN last_notified_price_event_id INTEGER NULL')
     }
@@ -904,6 +1192,10 @@ export class CardRepository {
       CREATE INDEX IF NOT EXISTS idx_price_signal_statistics_symbol_status ON price_signal_statistics (symbol, closed_at, id DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_price_signal_statistics_open_level ON price_signal_statistics (symbol, kind, level_price) WHERE closed_at IS NULL;
       CREATE INDEX IF NOT EXISTS idx_telegram_subscribers_is_active ON telegram_subscribers (is_active, chat_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_coin_listings_identity ON coin_listings (symbol, exchange, market_type, source);
+      CREATE INDEX IF NOT EXISTS idx_coin_listings_symbol ON coin_listings (symbol, exchange);
+      CREATE INDEX IF NOT EXISTS idx_coin_listings_exchange_source ON coin_listings (exchange, source);
+      CREATE INDEX IF NOT EXISTS idx_coin_listing_coingecko_state_synced_at ON coin_listing_coingecko_state (synced_at ASC);
     `)
   }
 
@@ -945,6 +1237,8 @@ export class CardRepository {
     const sellPriceMinObservedSelect = columns.has('sell_price_min_observed')
       ? 'sell_price_min_observed'
       : sellPriceSelect
+    const youtubeUrlSelect = columns.has('youtube_url') ? 'youtube_url' : 'NULL'
+    const telegramPostUrlSelect = columns.has('telegram_post_url') ? 'telegram_post_url' : 'NULL'
     const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
     const mexcAmount24hSelect = columns.has('mexc_amount_24h') ? 'mexc_amount_24h' : 'NULL'
     const mexcDailyAmounts3mSelect = columns.has('mexc_daily_amounts_3m') ? 'mexc_daily_amounts_3m' : 'NULL'
@@ -968,6 +1262,8 @@ export class CardRepository {
         buy_price_safe_max_observed REAL NULL,
         buy_price_risk_max_observed REAL NULL,
         sell_price_min_observed REAL NULL,
+        youtube_url TEXT NULL,
+        telegram_post_url TEXT NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_amount_24h REAL NULL,
@@ -986,6 +1282,8 @@ export class CardRepository {
         buy_price_safe_max_observed,
         buy_price_risk_max_observed,
         sell_price_min_observed,
+        youtube_url,
+        telegram_post_url,
         created_at,
         mexc_price,
         mexc_amount_24h,
@@ -1003,6 +1301,8 @@ export class CardRepository {
         ${buyPriceSafeMaxObservedSelect},
         ${buyPriceRiskMaxObservedSelect},
         ${sellPriceMinObservedSelect},
+        ${youtubeUrlSelect},
+        ${telegramPostUrlSelect},
         created_at,
         ${mexcPriceSelect},
         ${mexcAmount24hSelect},
@@ -1028,6 +1328,8 @@ export class CardRepository {
       buyPriceSafeMaxObserved: row.buy_price_safe_max_observed,
       buyPriceRiskMaxObserved: row.buy_price_risk_max_observed,
       sellPriceMinObserved: row.sell_price_min_observed,
+      youtubeUrl: row.youtube_url,
+      telegramPostUrl: row.telegram_post_url,
       createdAt: row.created_at,
       mexcPrice: row.mexc_price,
       mexcAmount24h: row.mexc_amount_24h,

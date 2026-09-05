@@ -474,3 +474,68 @@ test('logs database write failures with request context', async (t) => {
   assert.equal((errorRecord?.err as { message?: string } | undefined)?.message, 'database is locked')
   assert.equal(typeof errorRecord?.reqId, 'string')
 })
+
+test('stores optional youtube and telegram links and rejects invalid urls', async (t) => {
+  const { app, repository } = createTestContext()
+
+  t.after(async () => {
+    await app.close()
+    repository.close()
+  })
+
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/cards',
+    payload: {
+      symbol: 'btc',
+      buyPriceSafe: 100,
+      youtubeUrl: '  https://youtu.be/abc123  ',
+      telegramPostUrl: 'https://t.me/channel/42'
+    }
+  })
+
+  assert.equal(created.statusCode, 201)
+  assert.equal(created.json().youtubeUrl, 'https://youtu.be/abc123')
+  assert.equal(created.json().telegramPostUrl, 'https://t.me/channel/42')
+
+  const listed = await app.inject({ method: 'GET', url: '/api/cards' })
+
+  assert.equal(listed.json()[0].youtubeUrl, 'https://youtu.be/abc123')
+
+  const cleared = await app.inject({
+    method: 'PUT',
+    url: `/api/cards/${created.json().id}`,
+    payload: {
+      symbol: 'BTC',
+      buyPriceSafe: 100,
+      youtubeUrl: '',
+      telegramPostUrl: null
+    }
+  })
+
+  assert.equal(cleared.statusCode, 200)
+  assert.equal(cleared.json().youtubeUrl, null)
+  assert.equal(cleared.json().telegramPostUrl, null)
+
+  const invalidResponses = await Promise.all([
+    app.inject({
+      method: 'POST',
+      url: '/api/cards',
+      payload: { symbol: 'ETH', youtubeUrl: 'not a url' }
+    }),
+    app.inject({
+      method: 'POST',
+      url: '/api/cards',
+      payload: { symbol: 'ETH', telegramPostUrl: 'javascript:alert(1)' }
+    }),
+    app.inject({
+      method: 'POST',
+      url: '/api/cards',
+      payload: { symbol: 'ETH', youtubeUrl: 42 }
+    })
+  ])
+
+  assert.equal(invalidResponses[0].statusCode, 400)
+  assert.equal(invalidResponses[1].statusCode, 400)
+  assert.equal(invalidResponses[2].statusCode, 400)
+})

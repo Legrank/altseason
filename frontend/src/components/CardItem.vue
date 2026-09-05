@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Card } from '../types'
+import type { Card, CardExchange, ExchangeMarketType } from '../types'
 
 const props = defineProps<{
   card: Card
@@ -47,6 +47,25 @@ function formatDate(value: string) {
 
 function formatPercentage(value: number) {
   return percentageFormatter.format(value)
+}
+
+const marketTypeLabels: Record<ExchangeMarketType, string> = {
+  spot: 'Spot',
+  futures: 'Futures',
+}
+
+function formatMarketTypes(marketTypes: ExchangeMarketType[]) {
+  return marketTypes.map((marketType) => marketTypeLabels[marketType][0]).join('')
+}
+
+function describeExchange(exchange: CardExchange) {
+  const markets = exchange.marketTypes
+    .map((marketType) => marketTypeLabels[marketType])
+    .join(', ')
+
+  return exchange.source === 'exchange'
+    ? `${exchange.label}: ${markets}`
+    : `${exchange.label}: ${markets} (reported by CoinGecko)`
 }
 </script>
 
@@ -109,6 +128,59 @@ function formatPercentage(value: number) {
             </span>
           </p>
         </div>
+      </div>
+
+      <div class="exchanges">
+        <p class="label">Also listed on</p>
+        <div v-if="props.card.exchanges.length > 0" class="exchange-badges">
+          <component
+            :is="exchange.tradeUrl === null ? 'span' : 'a'"
+            v-for="exchange in props.card.exchanges"
+            :key="exchange.exchange"
+            class="exchange-badge"
+            :class="{ aggregated: exchange.source === 'coingecko' }"
+            :title="describeExchange(exchange)"
+            v-bind="
+              exchange.tradeUrl === null
+                ? {}
+                : {
+                    href: exchange.tradeUrl,
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                  }
+            "
+          >
+            {{ exchange.label }}
+            <span class="exchange-markets">{{
+              formatMarketTypes(exchange.marketTypes)
+            }}</span>
+          </component>
+        </div>
+        <p v-else class="exchange-empty">MEXC only</p>
+      </div>
+
+      <div
+        v-if="props.card.youtubeUrl !== null || props.card.telegramPostUrl !== null"
+        class="card-links"
+      >
+        <a
+          v-if="props.card.youtubeUrl !== null"
+          class="card-link"
+          :href="props.card.youtubeUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          YouTube
+        </a>
+        <a
+          v-if="props.card.telegramPostUrl !== null"
+          class="card-link"
+          :href="props.card.telegramPostUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Telegram
+        </a>
       </div>
 
       <div
@@ -177,5 +249,75 @@ function formatPercentage(value: number) {
 
 .price-change-down {
   color: #ff8f8f;
+}
+
+.exchanges {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.exchange-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.exchange-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #d8e4f5;
+  text-decoration: none;
+  background: rgba(120, 160, 220, 0.16);
+  border: 1px solid rgba(158, 199, 255, 0.28);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}
+
+a.exchange-badge:hover {
+  border-color: rgba(158, 199, 255, 0.75);
+}
+
+/* Venues that only the aggregator reported are less certain than a direct API read. */
+.exchange-badge.aggregated {
+  background: transparent;
+  color: #9aa8bd;
+  border-style: dashed;
+}
+
+.exchange-markets {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.exchange-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #9aa8bd;
+}
+
+.card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.card-link {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #9ec7ff;
+  text-decoration: none;
+  border: 1px solid rgba(158, 199, 255, 0.35);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+}
+
+.card-link:hover {
+  border-color: rgba(158, 199, 255, 0.75);
 }
 </style>

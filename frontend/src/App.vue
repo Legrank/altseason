@@ -10,7 +10,7 @@ import CardItem from './components/CardItem.vue'
 import CardModal from './components/CardModal.vue'
 import PriceSignalStatisticCard from './components/PriceSignalStatisticCard.vue'
 import VolumeSignalCard from './components/VolumeSignalCard.vue'
-import type { Card, PriceSignalStatistic, RatioThresholdEvent } from './types'
+import type { Card, CardPayload, PriceSignalStatistic, RatioThresholdEvent } from './types'
 
 type AppView = 'cards' | 'volume-signals' | 'statistics'
 type StatisticStatusFilter = 'all' | 'open' | 'closed'
@@ -308,12 +308,7 @@ function closeModal() {
   modalState.card = null
 }
 
-async function submitCard(payload: {
-  symbol: string
-  buyPriceSafe: number | null
-  buyPriceRisk: number | null
-  sellPrice: number | null
-}) {
+async function submitCard(payload: CardPayload) {
   submitting.value = true
   modalErrorMessage.value = ''
 

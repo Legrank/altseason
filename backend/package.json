@@ -8,6 +8,8 @@
     "start": "node --experimental-sqlite dist/server.js",
     "backfill:mexc-daily-amounts": "node --experimental-sqlite --import tsx src/scripts/backfill-mexc-daily-amounts.ts",
     "import:usdt-futures": "node --experimental-sqlite --import tsx src/scripts/import-usdt-futures.ts",
+    "sync:exchange-listings": "node --experimental-sqlite --import tsx src/scripts/sync-exchange-listings.ts",
+    "sync:coingecko-listings": "node --experimental-sqlite --import tsx src/scripts/sync-coingecko-listings.ts",
     "test": "node --experimental-sqlite --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {

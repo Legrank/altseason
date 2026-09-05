@@ -46,7 +46,9 @@ async function main() {
           symbol: card.symbol,
           buyPriceSafe: card.buyPriceSafe,
           buyPriceRisk: card.buyPriceRisk,
-          sellPrice: card.sellPrice
+          sellPrice: card.sellPrice,
+          youtubeUrl: card.youtubeUrl,
+          telegramPostUrl: card.telegramPostUrl
         },
         {
           mexcDailyAmounts3m: dailyAmounts
