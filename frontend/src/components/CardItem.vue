@@ -112,6 +112,30 @@ function formatPercentage(value: number) {
       </div>
 
       <div
+        v-if="props.card.youtubeUrl !== null || props.card.telegramPostUrl !== null"
+        class="card-links"
+      >
+        <a
+          v-if="props.card.youtubeUrl !== null"
+          class="card-link"
+          :href="props.card.youtubeUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          YouTube
+        </a>
+        <a
+          v-if="props.card.telegramPostUrl !== null"
+          class="card-link"
+          :href="props.card.telegramPostUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Telegram
+        </a>
+      </div>
+
+      <div
         v-if="
           props.card.mexcSyncStatus === 'not_found' ||
           props.card.mexcSyncStatus === 'error'
@@ -177,5 +201,25 @@ function formatPercentage(value: number) {
 
 .price-change-down {
   color: #ff8f8f;
+}
+
+.card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.card-link {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #9ec7ff;
+  text-decoration: none;
+  border: 1px solid rgba(158, 199, 255, 0.35);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+}
+
+.card-link:hover {
+  border-color: rgba(158, 199, 255, 0.75);
 }
 </style>

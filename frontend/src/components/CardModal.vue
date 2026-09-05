@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch } from 'vue'
 
-import type { Card } from '../types'
+import type { Card, CardPayload } from '../types'
 
 const props = defineProps<{
   open: boolean
@@ -12,14 +12,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  submit: [payload: { symbol: string; buyPriceSafe: number | null; buyPriceRisk: number | null; sellPrice: number | null }]
+  submit: [payload: CardPayload]
 }>()
 
 const form = reactive({
   symbol: '',
   buyPriceSafe: '',
   buyPriceRisk: '',
-  sellPrice: ''
+  sellPrice: '',
+  youtubeUrl: '',
+  telegramPostUrl: ''
 })
 
 watch(
@@ -33,6 +35,8 @@ watch(
     form.buyPriceSafe = card?.buyPriceSafe === null || card?.buyPriceSafe === undefined ? '' : String(card.buyPriceSafe)
     form.buyPriceRisk = card?.buyPriceRisk === null || card?.buyPriceRisk === undefined ? '' : String(card.buyPriceRisk)
     form.sellPrice = card?.sellPrice === null || card?.sellPrice === undefined ? '' : String(card.sellPrice)
+    form.youtubeUrl = card?.youtubeUrl ?? ''
+    form.telegramPostUrl = card?.telegramPostUrl ?? ''
   },
   { immediate: true }
 )
@@ -42,7 +46,9 @@ function handleSubmit() {
     symbol: form.symbol.trim().toUpperCase(),
     buyPriceSafe: form.buyPriceSafe === '' ? null : Number(form.buyPriceSafe),
     buyPriceRisk: form.buyPriceRisk === '' ? null : Number(form.buyPriceRisk),
-    sellPrice: form.sellPrice === '' ? null : Number(form.sellPrice)
+    sellPrice: form.sellPrice === '' ? null : Number(form.sellPrice),
+    youtubeUrl: form.youtubeUrl.trim() === '' ? null : form.youtubeUrl.trim(),
+    telegramPostUrl: form.telegramPostUrl.trim() === '' ? null : form.telegramPostUrl.trim()
   })
 }
 </script>
@@ -103,6 +109,30 @@ function handleSubmit() {
             min="0"
             step="0.000001"
             placeholder="Optional"
+          />
+        </label>
+
+        <label class="field">
+          <span>YouTube link</span>
+          <input
+            v-model="form.youtubeUrl"
+            type="url"
+            inputmode="url"
+            maxlength="2048"
+            placeholder="Optional"
+            autocomplete="off"
+          />
+        </label>
+
+        <label class="field">
+          <span>Telegram post link</span>
+          <input
+            v-model="form.telegramPostUrl"
+            type="url"
+            inputmode="url"
+            maxlength="2048"
+            placeholder="Optional"
+            autocomplete="off"
           />
         </label>
 

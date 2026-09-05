@@ -84,6 +84,8 @@ export class CardService {
         card.sellPrice,
         card.sellPriceMinObserved
       ),
+      youtubeUrl: card.youtubeUrl,
+      telegramPostUrl: card.telegramPostUrl,
       createdAt: card.createdAt,
       mexcPrice: card.mexcPrice,
       mexcAvgDailyVolume3m: calculateRobustAverage(card.mexcDailyAmounts3m ?? []),

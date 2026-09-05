@@ -28,6 +28,8 @@ interface CardRow {
   buy_price_safe_max_observed: number | null
   buy_price_risk_max_observed: number | null
   sell_price_min_observed: number | null
+  youtube_url: string | null
+  telegram_post_url: string | null
   created_at: string
   mexc_price: number | null
   mexc_amount_24h: number | null
@@ -127,7 +129,7 @@ export class CardRepository {
 
   list(): StoredCard[] {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, youtube_url, telegram_post_url, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       ORDER BY created_at DESC, id DESC
     `)
@@ -147,9 +149,11 @@ export class CardRepository {
     const mexcAmount24h = options?.mexcAmount24h ?? null
     const mexcDailyAmounts3m = options?.mexcDailyAmounts3m ?? null
     const mexcDailyAmountsUtcDate = options?.mexcDailyAmountsUtcDate ?? null
+    const youtubeUrl = payload.youtubeUrl ?? null
+    const telegramPostUrl = payload.telegramPostUrl ?? null
     const statement = this.db.prepare(`
-      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, youtube_url, telegram_post_url, created_at, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const result = statement.run(
       payload.symbol,
@@ -159,6 +163,8 @@ export class CardRepository {
       payload.buyPriceSafe,
       payload.buyPriceRisk,
       payload.sellPrice,
+      youtubeUrl,
+      telegramPostUrl,
       createdAt,
       mexcAmount24h,
       this.serializeDailyAmounts(mexcDailyAmounts3m),
@@ -175,6 +181,8 @@ export class CardRepository {
       buyPriceSafeMaxObserved: payload.buyPriceSafe,
       buyPriceRiskMaxObserved: payload.buyPriceRisk,
       sellPriceMinObserved: payload.sellPrice,
+      youtubeUrl,
+      telegramPostUrl,
       createdAt,
       mexcPrice: null,
       mexcAmount24h,
@@ -211,6 +219,8 @@ export class CardRepository {
       ? payload.buyPriceRisk
       : existing.buyPriceRiskMaxObserved
     const nextSellPriceMinObserved = sellPriceChanged ? payload.sellPrice : existing.sellPriceMinObserved
+    const nextYoutubeUrl = payload.youtubeUrl ?? null
+    const nextTelegramPostUrl = payload.telegramPostUrl ?? null
     const nextMexcAmount24h =
       options?.mexcAmount24h === undefined
         ? symbolChanged
@@ -226,7 +236,7 @@ export class CardRepository {
 
     const statement = this.db.prepare(`
       UPDATE cards
-      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?, mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
+      SET symbol = ?, buy_price_safe = ?, buy_price_risk = ?, sell_price = ?, buy_price_safe_max_observed = ?, buy_price_risk_max_observed = ?, sell_price_min_observed = ?, youtube_url = ?, telegram_post_url = ?, mexc_price = ?, mexc_amount_24h = ?, mexc_daily_amounts_3m = ?, mexc_daily_amounts_utc_date = ?, mexc_price_updated_at = ?, mexc_sync_status = ?
       WHERE id = ?
     `)
 
@@ -238,6 +248,8 @@ export class CardRepository {
       nextBuyPriceSafeMaxObserved,
       nextBuyPriceRiskMaxObserved,
       nextSellPriceMinObserved,
+      nextYoutubeUrl,
+      nextTelegramPostUrl,
       symbolChanged ? null : existing.mexcPrice,
       nextMexcAmount24h,
       this.serializeDailyAmounts(nextMexcDailyAmounts3m),
@@ -256,6 +268,8 @@ export class CardRepository {
       buyPriceSafeMaxObserved: nextBuyPriceSafeMaxObserved,
       buyPriceRiskMaxObserved: nextBuyPriceRiskMaxObserved,
       sellPriceMinObserved: nextSellPriceMinObserved,
+      youtubeUrl: nextYoutubeUrl,
+      telegramPostUrl: nextTelegramPostUrl,
       mexcPrice: symbolChanged ? null : existing.mexcPrice,
       mexcAmount24h: nextMexcAmount24h,
       mexcDailyAmounts3m: nextMexcDailyAmounts3m,
@@ -723,7 +737,7 @@ export class CardRepository {
 
   getById(id: number): StoredCard | null {
     const statement = this.db.prepare(`
-      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
+      SELECT id, symbol, buy_price_safe, buy_price_risk, sell_price, buy_price_safe_max_observed, buy_price_risk_max_observed, sell_price_min_observed, youtube_url, telegram_post_url, created_at, mexc_price, mexc_amount_24h, mexc_daily_amounts_3m, mexc_daily_amounts_utc_date, mexc_price_updated_at, mexc_sync_status
       FROM cards
       WHERE id = ?
     `)
@@ -743,6 +757,8 @@ export class CardRepository {
         buy_price_safe_max_observed REAL NULL,
         buy_price_risk_max_observed REAL NULL,
         sell_price_min_observed REAL NULL,
+        youtube_url TEXT NULL,
+        telegram_post_url TEXT NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_amount_24h REAL NULL,
@@ -881,6 +897,14 @@ export class CardRepository {
       this.db.exec('UPDATE cards SET sell_price_min_observed = sell_price')
     }
 
+    if (!columns.has('youtube_url')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN youtube_url TEXT NULL')
+    }
+
+    if (!columns.has('telegram_post_url')) {
+      this.db.exec('ALTER TABLE cards ADD COLUMN telegram_post_url TEXT NULL')
+    }
+
     if (!telegramSubscriberColumns.has('last_notified_price_event_id')) {
       this.db.exec('ALTER TABLE telegram_subscribers ADD COLUMN last_notified_price_event_id INTEGER NULL')
     }
@@ -945,6 +969,8 @@ export class CardRepository {
     const sellPriceMinObservedSelect = columns.has('sell_price_min_observed')
       ? 'sell_price_min_observed'
       : sellPriceSelect
+    const youtubeUrlSelect = columns.has('youtube_url') ? 'youtube_url' : 'NULL'
+    const telegramPostUrlSelect = columns.has('telegram_post_url') ? 'telegram_post_url' : 'NULL'
     const mexcPriceSelect = columns.has('mexc_price') ? 'mexc_price' : 'NULL'
     const mexcAmount24hSelect = columns.has('mexc_amount_24h') ? 'mexc_amount_24h' : 'NULL'
     const mexcDailyAmounts3mSelect = columns.has('mexc_daily_amounts_3m') ? 'mexc_daily_amounts_3m' : 'NULL'
@@ -968,6 +994,8 @@ export class CardRepository {
         buy_price_safe_max_observed REAL NULL,
         buy_price_risk_max_observed REAL NULL,
         sell_price_min_observed REAL NULL,
+        youtube_url TEXT NULL,
+        telegram_post_url TEXT NULL,
         created_at TEXT NOT NULL,
         mexc_price REAL NULL,
         mexc_amount_24h REAL NULL,
@@ -986,6 +1014,8 @@ export class CardRepository {
         buy_price_safe_max_observed,
         buy_price_risk_max_observed,
         sell_price_min_observed,
+        youtube_url,
+        telegram_post_url,
         created_at,
         mexc_price,
         mexc_amount_24h,
@@ -1003,6 +1033,8 @@ export class CardRepository {
         ${buyPriceSafeMaxObservedSelect},
         ${buyPriceRiskMaxObservedSelect},
         ${sellPriceMinObservedSelect},
+        ${youtubeUrlSelect},
+        ${telegramPostUrlSelect},
         created_at,
         ${mexcPriceSelect},
         ${mexcAmount24hSelect},
@@ -1028,6 +1060,8 @@ export class CardRepository {
       buyPriceSafeMaxObserved: row.buy_price_safe_max_observed,
       buyPriceRiskMaxObserved: row.buy_price_risk_max_observed,
       sellPriceMinObserved: row.sell_price_min_observed,
+      youtubeUrl: row.youtube_url,
+      telegramPostUrl: row.telegram_post_url,
       createdAt: row.created_at,
       mexcPrice: row.mexc_price,
       mexcAmount24h: row.mexc_amount_24h,

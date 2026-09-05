@@ -9,6 +9,8 @@ export interface Card {
   buyPriceSafeMaxIncreasePercent: number | null
   buyPriceRiskMaxIncreasePercent: number | null
   sellPriceMaxDecreasePercent: number | null
+  youtubeUrl: string | null
+  telegramPostUrl: string | null
   createdAt: string
   mexcPrice: number | null
   mexcAvgDailyVolume3m: number | null
@@ -49,4 +51,6 @@ export interface CardPayload {
   buyPriceSafe: number | null
   buyPriceRisk: number | null
   sellPrice: number | null
+  youtubeUrl: string | null
+  telegramPostUrl: string | null
 }

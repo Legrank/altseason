@@ -19,6 +19,8 @@ interface AppOptions {
   logger?: FastifyServerOptions['logger']
 }
 
+const MAX_URL_LENGTH = 2048
+
 function normalizeOptionalPrice(value: unknown): number | null | undefined {
   if (value === undefined || value === null) {
     return null
@@ -43,6 +45,40 @@ function normalizeSafePrice(value: unknown): number | null | undefined {
   return value
 }
 
+function normalizeOptionalUrl(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const url = value.trim()
+
+  if (!url) {
+    return null
+  }
+
+  if (url.length > MAX_URL_LENGTH) {
+    return undefined
+  }
+
+  let parsed: URL
+
+  try {
+    parsed = new URL(url)
+  } catch {
+    return undefined
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return undefined
+  }
+
+  return url
+}
+
 function normalizePayload(payload: unknown): CardPayload | null {
   if (typeof payload !== 'object' || payload === null) {
     return null
@@ -52,6 +88,8 @@ function normalizePayload(payload: unknown): CardPayload | null {
   const rawBuyPriceSafe = Reflect.get(payload, 'buyPriceSafe')
   const rawBuyPriceRisk = Reflect.get(payload, 'buyPriceRisk')
   const rawSellPrice = Reflect.get(payload, 'sellPrice')
+  const rawYoutubeUrl = Reflect.get(payload, 'youtubeUrl')
+  const rawTelegramPostUrl = Reflect.get(payload, 'telegramPostUrl')
 
   if (typeof rawSymbol !== 'string') {
     return null
@@ -61,8 +99,17 @@ function normalizePayload(payload: unknown): CardPayload | null {
   const buyPriceSafe = normalizeSafePrice(rawBuyPriceSafe)
   const buyPriceRisk = normalizeOptionalPrice(rawBuyPriceRisk)
   const sellPrice = normalizeOptionalPrice(rawSellPrice)
+  const youtubeUrl = normalizeOptionalUrl(rawYoutubeUrl)
+  const telegramPostUrl = normalizeOptionalUrl(rawTelegramPostUrl)
 
-  if (!symbol || buyPriceSafe === undefined || buyPriceRisk === undefined || sellPrice === undefined) {
+  if (
+    !symbol ||
+    buyPriceSafe === undefined ||
+    buyPriceRisk === undefined ||
+    sellPrice === undefined ||
+    youtubeUrl === undefined ||
+    telegramPostUrl === undefined
+  ) {
     return null
   }
 
@@ -70,7 +117,9 @@ function normalizePayload(payload: unknown): CardPayload | null {
     symbol,
     buyPriceSafe,
     buyPriceRisk,
-    sellPrice
+    sellPrice,
+    youtubeUrl,
+    telegramPostUrl
   }
 }
 
