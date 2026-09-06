@@ -44,7 +44,7 @@ docker compose up -d --build
 Run the update script from any directory inside the production server:
 
 ```bash
-bash /path/to/altseason/deploy/update-production.sh
+bash altseason/deploy/update-production.sh
 ```
 
 The script requires a clean Git working tree and a configured upstream branch. It performs a

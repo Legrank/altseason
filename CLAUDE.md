@@ -33,7 +33,7 @@ One-off maintenance scripts (write directly to `backend/data/cards.sqlite`, hit 
 cd backend && npm run import:usdt-futures            # add cards for every current USDT contract
 cd backend && npm run backfill:mexc-daily-amounts    # fill missing 90-day volume history, rate-limited
 cd backend && npm run sync:exchange-listings         # refresh "listed on" data from every exchange API
-cd backend && npm run sync:coingecko-listings        # one CoinGecko rotation slice (accepts [db] [budget])
+cd backend && npm run sync:coingecko-listings        # refresh derivatives venues (accepts [db] [maxVenues])
 ```
 
 Both listing scripts take an optional SQLite path as the first argument (default `backend/data/cards.sqlite`),
@@ -79,9 +79,11 @@ graceful shutdown. `app.ts` (`createApp`) is dependency-injected and used direct
   venues list each tracked coin, spot and USDT perpetual. Each venue is replaced independently, so a
   failing or geo-blocked venue never clears the others, and an empty/non-overlapping response is
   rejected rather than written.
-- **`services/coingecko-listing-sync-service.ts`** — every 24h, adds venues the direct clients do not
-  cover. CoinGecko bills per call (10k/month free), so a run spends a fixed coin budget on the cards
-  with the oldest aggregator data and the catalog rotates through over several days.
+- **`services/coingecko-listing-sync-service.ts`** — every 24h (after the direct sync), adds
+  *derivatives* venues the direct clients do not cover. One `GET /derivatives` call returns every
+  perpetual on ~105 venues with the underlying in `index_id`, so there is no per-coin budget. Keeps
+  the top `COINGECKO_MAX_VENUES_PER_COIN` (default 5) by open interest, counted after dropping MEXC
+  itself and any directly-covered venue. Contributes no spot data — spot is the direct clients' job.
 - **`services/symbol-aliases.ts`** — expands a symbol into itself plus its unscaled ticker
   (`1000BONK` -> `BONK`), stripping only the longest matching scale prefix. Used on both sides of
   every cross-venue symbol comparison.
@@ -141,5 +143,5 @@ host nginx (`deploy/nginx/alt.legrank.ru.conf`). Backend logs: `docker logs -f a
 Backend env vars: `PORT` (3001), `HOST` (0.0.0.0), `LOG_LEVEL`, `TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_ALLOWED_USERNAMES`, `TELEGRAM_DEFAULT_MIN_THRESHOLD` (2..10).
 `EXCHANGE_LISTING_DISABLED_EXCHANGES` (csv of exchange ids), `COINGECKO_ENABLED` (`false` disables),
-`COINGECKO_API_KEY`, `COINGECKO_API_KEY_KIND` (`demo` | `pro`), `COINGECKO_DAILY_COIN_BUDGET` (1..1000,
-default 100). `config.ts` also loads `backend/.env.local` / `backend/.env` manually (no dotenv dep).
+`COINGECKO_API_KEY`, `COINGECKO_API_KEY_KIND` (`demo` | `pro`), `COINGECKO_MAX_VENUES_PER_COIN` (1..50,
+default 5). `config.ts` also loads `backend/.env.local` / `backend/.env` manually (no dotenv dep).

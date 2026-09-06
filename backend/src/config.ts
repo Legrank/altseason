@@ -11,7 +11,7 @@ export interface CoingeckoConfig {
   enabled: boolean
   apiKey: string | null
   apiKeyKind: 'demo' | 'pro'
-  dailyCoinBudget: number
+  maxVenuesPerCoin: number
 }
 
 export function loadOptionalEnvFiles(paths: string[]): void {
@@ -65,7 +65,7 @@ export function readCoingeckoConfig(): CoingeckoConfig {
     enabled: process.env.COINGECKO_ENABLED?.trim().toLowerCase() !== 'false',
     apiKey: process.env.COINGECKO_API_KEY?.trim() || null,
     apiKeyKind: process.env.COINGECKO_API_KEY_KIND?.trim().toLowerCase() === 'pro' ? 'pro' : 'demo',
-    dailyCoinBudget: parseCoinBudget(process.env.COINGECKO_DAILY_COIN_BUDGET)
+    maxVenuesPerCoin: parseMaxVenuesPerCoin(process.env.COINGECKO_MAX_VENUES_PER_COIN)
   }
 }
 
@@ -81,10 +81,10 @@ export function readDisabledExchangeIds(): Set<string> {
   )
 }
 
-function parseCoinBudget(value: string | undefined): number {
+function parseMaxVenuesPerCoin(value: string | undefined): number {
   const parsed = Number(value)
 
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 1000 ? parsed : 100
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 50 ? parsed : 5
 }
 
 function parseCsvSet(value: string | undefined, normalizeUsername = false): Set<string> {

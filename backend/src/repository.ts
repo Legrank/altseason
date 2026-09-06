@@ -129,6 +129,7 @@ export interface UsdtContractCardSyncResult {
 
 const USDT_CONTRACT_SYNC_COMPLETED_AT_KEY = 'mexc_usdt_contract_sync_completed_at'
 const EXCHANGE_LISTING_SYNC_COMPLETED_AT_KEY = 'exchange_listing_sync_completed_at'
+const COINGECKO_LISTING_SYNC_COMPLETED_AT_KEY = 'coingecko_listing_sync_completed_at'
 
 export class CardRepository {
   private readonly db: DatabaseSync
@@ -383,9 +384,6 @@ export class CardRepository {
       }
 
       const deleteCoinListings = this.db.prepare('DELETE FROM coin_listings WHERE symbol = ?')
-      const deleteCoingeckoState = this.db.prepare(
-        'DELETE FROM coin_listing_coingecko_state WHERE symbol = ?'
-      )
 
       for (const row of existingRows) {
         if (nextSymbols.has(row.symbol)) {
@@ -395,7 +393,6 @@ export class CardRepository {
         deletePriceEvents.run(row.id)
         deleteRatioEvents.run(row.symbol)
         deleteCoinListings.run(row.symbol)
-        deleteCoingeckoState.run(row.symbol)
         deleteCard.run(row.id)
         deletedCount += 1
       }
@@ -501,22 +498,18 @@ export class CardRepository {
    * replacement an empty set is valid here: it is the correct answer for a coin that
    * CoinGecko knows about but that trades nowhere it tracks.
    */
-  replaceCoingeckoListings(
-    symbol: string,
-    coinId: string | null,
-    listings: readonly CoingeckoListingInput[],
-    syncedAt: string
-  ): number {
-    const normalizedSymbol = normalizeSymbol(symbol)
-
-    if (!normalizedSymbol) {
-      throw new Error('Cannot replace CoinGecko listings without a symbol.')
+  /**
+   * Replaces every aggregator-sourced listing in one transaction. The CoinGecko sync reads
+   * the whole derivatives universe in a single call, so it always writes a complete set.
+   * An empty set is rejected: a blank response must never wipe the stored venues.
+   */
+  replaceCoingeckoListings(listings: readonly CoingeckoListingInput[], updatedAt: string): number {
+    if (listings.length === 0) {
+      throw new Error('Cannot replace CoinGecko listings with an empty listing set.')
     }
 
     return this.withTransaction(() => {
-      this.db
-        .prepare("DELETE FROM coin_listings WHERE symbol = ? AND source = 'coingecko'")
-        .run(normalizedSymbol)
+      this.db.prepare("DELETE FROM coin_listings WHERE source = 'coingecko'").run()
 
       const insert = this.db.prepare(`
         INSERT INTO coin_listings (symbol, exchange, label, market_type, pair, source, trade_url, volume_usd_24h, updated_at)
@@ -531,37 +524,65 @@ export class CardRepository {
       let writtenCount = 0
 
       for (const listing of listings) {
+        const symbol = normalizeSymbol(listing.symbol)
         const exchangeId = listing.exchange.trim().toLowerCase()
 
-        if (!exchangeId) {
+        if (!symbol || !exchangeId) {
           continue
         }
 
         insert.run(
-          normalizedSymbol,
+          symbol,
           exchangeId,
           listing.label,
           listing.marketType,
           listing.pair,
           listing.tradeUrl,
           listing.volumeUsd24h,
-          syncedAt
+          updatedAt
         )
         writtenCount += 1
       }
 
-      this.db
-        .prepare(`
-          INSERT INTO coin_listing_coingecko_state (symbol, coin_id, synced_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(symbol) DO UPDATE SET
-            coin_id = excluded.coin_id,
-            synced_at = excluded.synced_at
-        `)
-        .run(normalizedSymbol, coinId, syncedAt)
-
       return writtenCount
     })
+  }
+
+  /**
+   * Exchanges the direct clients currently report. The CoinGecko sync skips these so its
+   * venue budget is spent on venues no direct client covers.
+   */
+  getDirectlySourcedExchangeIds(): string[] {
+    const statement = this.db.prepare(`
+      SELECT DISTINCT exchange
+      FROM coin_listings
+      WHERE source = 'exchange'
+      ORDER BY exchange ASC
+    `)
+
+    return (statement.all() as unknown as Array<{ exchange: string }>).map((row) => row.exchange)
+  }
+
+  getCoingeckoListingSyncCompletedAt(): string | null {
+    const row = this.db
+      .prepare(`
+        SELECT value
+        FROM app_metadata
+        WHERE key = ?
+      `)
+      .get(COINGECKO_LISTING_SYNC_COMPLETED_AT_KEY) as { value: string } | undefined
+
+    return row?.value ?? null
+  }
+
+  setCoingeckoListingSyncCompletedAt(completedAt: string): void {
+    this.db
+      .prepare(`
+        INSERT INTO app_metadata (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `)
+      .run(COINGECKO_LISTING_SYNC_COMPLETED_AT_KEY, completedAt)
   }
 
   listCoinListings(): StoredCoinListing[] {
@@ -603,28 +624,6 @@ export class CardRepository {
       volumeUsd24h: row.volume_usd_24h,
       updatedAt: row.updated_at
     }))
-  }
-
-  /**
-   * Cards whose aggregator data is oldest (never-synced first), capped at `limit`.
-   * The CoinGecko sync spends a fixed daily call budget walking this queue, so every
-   * card is refreshed on a rotation instead of the catalog being fetched at once.
-   */
-  getStaleCoingeckoSymbols(limit: number): string[] {
-    if (!Number.isInteger(limit) || limit <= 0) {
-      return []
-    }
-
-    const statement = this.db.prepare(`
-      SELECT cards.symbol AS symbol
-      FROM cards
-      LEFT JOIN coin_listing_coingecko_state AS state ON state.symbol = cards.symbol
-      GROUP BY cards.symbol
-      ORDER BY MIN(COALESCE(state.synced_at, '')) ASC, cards.symbol ASC
-      LIMIT ?
-    `)
-
-    return (statement.all(limit) as unknown as Array<{ symbol: string }>).map((row) => row.symbol)
   }
 
   listRatioThresholdEvents(threshold: number): RatioThresholdEvent[] {
@@ -1085,13 +1084,9 @@ export class CardRepository {
       )
     `)
 
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS coin_listing_coingecko_state (
-        symbol TEXT PRIMARY KEY,
-        coin_id TEXT NULL,
-        synced_at TEXT NOT NULL
-      )
-    `)
+    // Dropped with the per-coin CoinGecko rotation: /derivatives returns the whole
+    // universe in one call, so there is no cursor left to persist.
+    this.db.exec('DROP TABLE IF EXISTS coin_listing_coingecko_state')
 
     const columns = this.readTableColumns('cards')
     const telegramSubscriberColumns = this.readTableColumns('telegram_subscribers')
@@ -1195,7 +1190,6 @@ export class CardRepository {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_coin_listings_identity ON coin_listings (symbol, exchange, market_type, source);
       CREATE INDEX IF NOT EXISTS idx_coin_listings_symbol ON coin_listings (symbol, exchange);
       CREATE INDEX IF NOT EXISTS idx_coin_listings_exchange_source ON coin_listings (exchange, source);
-      CREATE INDEX IF NOT EXISTS idx_coin_listing_coingecko_state_synced_at ON coin_listing_coingecko_state (synced_at ASC);
     `)
   }
 

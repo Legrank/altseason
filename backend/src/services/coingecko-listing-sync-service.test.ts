@@ -1,49 +1,39 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CoingeckoClientError } from '../integrations/coingecko/index.js'
-import type { CoingeckoCoin, CoingeckoTicker } from '../integrations/coingecko/index.js'
+import type { CoingeckoPerpetual } from '../integrations/coingecko/index.js'
 import { CardRepository } from '../repository.js'
-import { CoingeckoListingSyncService } from './coingecko-listing-sync-service.js'
+import {
+  CoingeckoListingSyncService,
+  toExchangeIdentity
+} from './coingecko-listing-sync-service.js'
 
 const silentLogger = { info() {}, warn() {}, error() {} }
 
-function ticker(overrides: Partial<CoingeckoTicker> & { exchangeId: string }): CoingeckoTicker {
+function perpetual(
+  market: string,
+  indexId: string,
+  openInterest: number | null,
+  overrides: Partial<CoingeckoPerpetual> = {}
+): CoingeckoPerpetual {
   return {
-    exchangeName: overrides.exchangeId,
-    base: 'BTC',
-    target: 'USDT',
-    tradeUrl: null,
-    volumeUsd: 1000,
-    trustScore: 'green',
-    isStale: false,
+    market,
+    symbol: `${indexId}USDT`,
+    indexId,
+    openInterest,
+    volume24h: 1000,
     ...overrides
   }
 }
 
-interface StubOptions {
-  coinsList?: CoingeckoCoin[]
-  topCoins?: CoingeckoCoin[]
-  tickersByCoinId?: Record<string, CoingeckoTicker[]>
-  onGetCoinTickers?: (coinId: string) => void
-}
-
-function stubClient(options: StubOptions) {
-  const requestedCoinIds: string[] = []
-
+function stubClient(perpetuals: CoingeckoPerpetual[] | (() => Promise<never>)) {
   return {
-    requestedCoinIds,
-    async getCoinsList() {
-      return options.coinsList ?? []
-    },
-    async getTopCoinsByMarketCap() {
-      return options.topCoins ?? []
-    },
-    async getCoinTickers(coinId: string) {
-      requestedCoinIds.push(coinId)
-      options.onGetCoinTickers?.(coinId)
+    async getPerpetualDerivatives() {
+      if (typeof perpetuals === 'function') {
+        return perpetuals()
+      }
 
-      return options.tickersByCoinId?.[coinId] ?? []
+      return perpetuals
     }
   }
 }
@@ -54,209 +44,205 @@ function seedCards(repository: CardRepository, symbols: string[]): void {
   }
 }
 
-test('stores aggregator listings for a symbol that resolves to exactly one coin', async (t) => {
+function service(
+  repository: CardRepository,
+  perpetuals: CoingeckoPerpetual[] | (() => Promise<never>),
+  maxVenuesPerCoin = 5
+) {
+  return new CoingeckoListingSyncService({
+    repository,
+    coingeckoClient: stubClient(perpetuals),
+    maxVenuesPerCoin,
+    now: () => new Date('2026-09-06T10:00:00.000Z'),
+    logger: silentLogger
+  })
+}
+
+test('strips only market-type suffixes from a venue name', () => {
+  assert.deepEqual(toExchangeIdentity('Binance (Futures)'), { id: 'binance', label: 'Binance' })
+  assert.deepEqual(toExchangeIdentity('Bitget Futures'), { id: 'bitget', label: 'Bitget' })
+  assert.deepEqual(toExchangeIdentity('XT.COM (Derivatives)'), { id: 'xtcom', label: 'XT.COM' })
+  assert.deepEqual(toExchangeIdentity('BitMEX (Derivative)'), { id: 'bitmex', label: 'BitMEX' })
+})
+
+test('keeps a parenthetical that names a chain rather than a market type', () => {
+  assert.deepEqual(toExchangeIdentity('KiloEx (BSC)'), { id: 'kiloexbsc', label: 'KiloEx (BSC)' })
+  assert.deepEqual(toExchangeIdentity('GMX Perpetuals V2 (Arbitrum)'), {
+    id: 'gmxperpetualsv2arbitrum',
+    label: 'GMX Perpetuals V2 (Arbitrum)'
+  })
+})
+
+test('does not strip a suffix that is part of the venue name itself', () => {
+  assert.deepEqual(toExchangeIdentity('SynFutures'), { id: 'synfutures', label: 'SynFutures' })
+})
+
+test('stores futures listings ranked by open interest, capped per coin', async (t) => {
   const repository = new CardRepository(':memory:')
   seedCards(repository, ['BTC'])
   t.after(() => repository.close())
 
-  const service = new CoingeckoListingSyncService({
+  const result = await service(
     repository,
-    coingeckoClient: stubClient({
-      coinsList: [{ id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' }],
-      tickersByCoinId: {
-        bitcoin: [
-          ticker({ exchangeId: 'upbit', exchangeName: 'Upbit', volumeUsd: 500 }),
-          ticker({ exchangeId: 'kraken', exchangeName: 'Kraken', volumeUsd: 900 })
-        ]
-      }
-    }),
-    now: () => new Date('2026-09-05T10:00:00.000Z')
-  })
-
-  const result = await service.syncNow()
-
-  assert.deepEqual(result, { processedSymbols: 1, resolvedSymbols: 1, listingCount: 2 })
-  assert.deepEqual(
-    repository.listCoinListings().map((listing) => [listing.exchange, listing.source]),
     [
-      ['kraken', 'coingecko'],
-      ['upbit', 'coingecko']
+      perpetual('Hyperliquid (Futures)', 'BTC', 500),
+      perpetual('Deribit', 'BTC', 900),
+      perpetual('BingX (Futures)', 'BTC', 100),
+      perpetual('Zoomex (Futures)', 'BTC', 50)
+    ],
+    2
+  ).syncNow()
+
+  assert.deepEqual(result, { matchedSymbols: 1, listingCount: 2 })
+  assert.deepEqual(
+    repository.listCoinListingsForSymbol('BTC').map((listing) => [listing.label, listing.marketType]),
+    [
+      ['Deribit', 'futures'],
+      ['Hyperliquid', 'futures']
     ]
   )
 })
 
-test('keeps only the deepest market when a venue lists several quotes', async (t) => {
+test('never lists MEXC itself, since every card already lives there', async (t) => {
   const repository = new CardRepository(':memory:')
   seedCards(repository, ['BTC'])
   t.after(() => repository.close())
 
-  await new CoingeckoListingSyncService({
-    repository,
-    coingeckoClient: stubClient({
-      coinsList: [{ id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' }],
-      tickersByCoinId: {
-        bitcoin: [
-          ticker({ exchangeId: 'kraken', target: 'EUR', volumeUsd: 100 }),
-          ticker({ exchangeId: 'kraken', target: 'USDT', volumeUsd: 900 })
-        ]
-      }
-    }),
-    now: () => new Date('2026-09-05T10:00:00.000Z')
-  }).syncNow()
+  await service(repository, [
+    perpetual('MEXC (Futures)', 'BTC', 9000),
+    perpetual('Deribit', 'BTC', 10)
+  ]).syncNow()
 
   assert.deepEqual(
-    repository.listCoinListings().map((listing) => listing.pair),
-    ['BTC/USDT']
+    repository.listCoinListingsForSymbol('BTC').map((listing) => listing.exchange),
+    ['deribit']
   )
 })
 
-test('skips stale tickers', async (t) => {
+test('spends its venue slots on exchanges no direct client already reports', async (t) => {
   const repository = new CardRepository(':memory:')
   seedCards(repository, ['BTC'])
   t.after(() => repository.close())
 
-  await new CoingeckoListingSyncService({
+  repository.replaceExchangeListings(
+    'binance',
+    'Binance',
+    [{ symbol: 'BTC', marketType: 'futures', pair: 'BTCUSDT', tradeUrl: null }],
+    '2026-09-05T10:00:00.000Z'
+  )
+
+  await service(
     repository,
-    coingeckoClient: stubClient({
-      coinsList: [{ id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' }],
-      tickersByCoinId: {
-        bitcoin: [ticker({ exchangeId: 'dead-exchange', isStale: true })]
-      }
-    }),
-    now: () => new Date('2026-09-05T10:00:00.000Z')
-  }).syncNow()
-
-  assert.equal(repository.listCoinListings().length, 0)
-})
-
-test('settles an ambiguous ticker by market-cap rank rather than guessing', async (t) => {
-  const repository = new CardRepository(':memory:')
-  seedCards(repository, ['SOL'])
-  t.after(() => repository.close())
-
-  const client = stubClient({
-    coinsList: [
-      { id: 'wrapped-solana', symbol: 'SOL', name: 'Wrapped Solana' },
-      { id: 'solana', symbol: 'SOL', name: 'Solana' }
+    [
+      // Binance outranks everything on open interest but is already covered directly.
+      perpetual('Binance (Futures)', 'BTC', 9_000_000),
+      perpetual('Deribit', 'BTC', 500),
+      perpetual('Hyperliquid (Futures)', 'BTC', 400)
     ],
-    topCoins: [
-      { id: 'solana', symbol: 'SOL', name: 'Solana' },
-      { id: 'wrapped-solana', symbol: 'SOL', name: 'Wrapped Solana' }
+    2
+  ).syncNow()
+
+  assert.deepEqual(
+    repository
+      .listCoinListingsForSymbol('BTC')
+      .filter((listing) => listing.source === 'coingecko')
+      .map((listing) => listing.exchange),
+    ['deribit', 'hyperliquid']
+  )
+})
+
+test('ranks a venue by its deepest contract when it runs several on one asset', async (t) => {
+  const repository = new CardRepository(':memory:')
+  seedCards(repository, ['BTC'])
+  t.after(() => repository.close())
+
+  await service(
+    repository,
+    [
+      perpetual('Deribit', 'BTC', 10, { symbol: 'BTC-PERP-A' }),
+      perpetual('Deribit', 'BTC', 800, { symbol: 'BTC-PERP-B' }),
+      perpetual('Hyperliquid (Futures)', 'BTC', 400)
     ],
-    tickersByCoinId: { solana: [ticker({ exchangeId: 'kraken', base: 'SOL' })] }
-  })
+    1
+  ).syncNow()
 
-  await new CoingeckoListingSyncService({
-    repository,
-    coingeckoClient: client,
-    now: () => new Date('2026-09-05T10:00:00.000Z')
-  }).syncNow()
-
-  assert.deepEqual(client.requestedCoinIds, ['solana'])
+  assert.deepEqual(
+    repository.listCoinListingsForSymbol('BTC').map((listing) => [listing.exchange, listing.pair]),
+    [['deribit', 'BTC-PERP-B']]
+  )
 })
 
-test('leaves an ambiguous unranked ticker unresolved instead of attributing another coin', async (t) => {
-  const repository = new CardRepository(':memory:')
-  seedCards(repository, ['CAT'])
-  t.after(() => repository.close())
-
-  const client = stubClient({
-    coinsList: [
-      { id: 'cat-one', symbol: 'CAT', name: 'Cat One' },
-      { id: 'cat-two', symbol: 'CAT', name: 'Cat Two' }
-    ],
-    topCoins: []
-  })
-
-  const result = await new CoingeckoListingSyncService({
-    repository,
-    coingeckoClient: client,
-    now: () => new Date('2026-09-05T10:00:00.000Z')
-  }).syncNow()
-
-  assert.deepEqual(client.requestedCoinIds, [])
-  assert.deepEqual(result, { processedSymbols: 1, resolvedSymbols: 0, listingCount: 0 })
-  assert.equal(repository.listCoinListings().length, 0)
-})
-
-test('spends the budget on the oldest cards and rotates on the next run', async (t) => {
-  const repository = new CardRepository(':memory:')
-  seedCards(repository, ['AAA', 'BBB', 'CCC'])
-  t.after(() => repository.close())
-
-  const coins = ['AAA', 'BBB', 'CCC'].map((symbol) => ({
-    id: symbol.toLowerCase(),
-    symbol,
-    name: symbol
-  }))
-  const client = stubClient({ coinsList: coins })
-  let currentTime = Date.parse('2026-09-05T10:00:00.000Z')
-  const service = new CoingeckoListingSyncService({
-    repository,
-    coingeckoClient: client,
-    dailyCoinBudget: 2,
-    now: () => new Date(currentTime)
-  })
-
-  await service.syncNow()
-  assert.deepEqual(client.requestedCoinIds, ['aaa', 'bbb'])
-
-  currentTime += 60 * 60 * 1000
-  await service.syncNow()
-
-  // The never-synced card leads the queue, then the rotation wraps to the oldest refresh.
-  assert.deepEqual(client.requestedCoinIds, ['aaa', 'bbb', 'ccc', 'aaa'])
-})
-
-test('stops the run on a rate limit and leaves the rest of the budget for later', async (t) => {
-  const repository = new CardRepository(':memory:')
-  seedCards(repository, ['AAA', 'BBB', 'CCC'])
-  t.after(() => repository.close())
-
-  const client = stubClient({
-    coinsList: ['AAA', 'BBB', 'CCC'].map((symbol) => ({
-      id: symbol.toLowerCase(),
-      symbol,
-      name: symbol
-    })),
-    onGetCoinTickers(coinId) {
-      if (coinId === 'bbb') {
-        throw new CoingeckoClientError('rate_limit', 'rate limited', { retryAfterMs: 60_000 })
-      }
-    }
-  })
-
-  const result = await new CoingeckoListingSyncService({
-    repository,
-    coingeckoClient: client,
-    dailyCoinBudget: 3,
-    now: () => new Date('2026-09-05T10:00:00.000Z'),
-    logger: silentLogger
-  }).syncNow()
-
-  assert.deepEqual(client.requestedCoinIds, ['aaa', 'bbb'])
-  assert.deepEqual(result, { processedSymbols: 1, resolvedSymbols: 1, listingCount: 0 })
-})
-
-test('resolves a scaled MEXC symbol through its unscaled ticker', async (t) => {
+test('matches a scaled MEXC contract through its unscaled index', async (t) => {
   const repository = new CardRepository(':memory:')
   seedCards(repository, ['1000BONK'])
   t.after(() => repository.close())
 
-  const client = stubClient({
-    coinsList: [{ id: 'bonk', symbol: 'BONK', name: 'Bonk' }],
-    tickersByCoinId: { bonk: [ticker({ exchangeId: 'kraken', base: 'BONK' })] }
-  })
+  await service(repository, [perpetual('Hyperliquid (Futures)', 'BONK', 500)]).syncNow()
 
-  await new CoingeckoListingSyncService({
+  assert.deepEqual(
+    repository.listCoinListings().map((listing) => [listing.symbol, listing.exchange]),
+    [['1000BONK', 'hyperliquid']]
+  )
+})
+
+test('ranks contracts without a reported open interest below those that have one', async (t) => {
+  const repository = new CardRepository(':memory:')
+  seedCards(repository, ['BTC'])
+  t.after(() => repository.close())
+
+  await service(
     repository,
-    coingeckoClient: client,
-    now: () => new Date('2026-09-05T10:00:00.000Z')
-  }).syncNow()
+    [perpetual('Deribit', 'BTC', null), perpetual('Hyperliquid (Futures)', 'BTC', 1)],
+    1
+  ).syncNow()
 
-  assert.deepEqual(client.requestedCoinIds, ['bonk'])
+  assert.deepEqual(
+    repository.listCoinListingsForSymbol('BTC').map((listing) => listing.exchange),
+    ['hyperliquid']
+  )
+})
+
+test('an empty derivatives response never wipes the stored venues', async (t) => {
+  const repository = new CardRepository(':memory:')
+  seedCards(repository, ['BTC'])
+  t.after(() => repository.close())
+
+  await service(repository, [perpetual('Deribit', 'BTC', 500)]).syncNow()
+
+  const result = await service(repository, []).syncNow()
+
+  assert.equal(result, null)
+  assert.equal(repository.listCoinListings().length, 1)
+  assert.equal(repository.getCoingeckoListingSyncCompletedAt(), '2026-09-06T10:00:00.000Z')
+})
+
+test('a response that matches no tracked coin never wipes the stored venues', async (t) => {
+  const repository = new CardRepository(':memory:')
+  seedCards(repository, ['BTC'])
+  t.after(() => repository.close())
+
+  await service(repository, [perpetual('Deribit', 'BTC', 500)]).syncNow()
+
+  const result = await service(repository, [perpetual('Deribit', 'UNTRACKED', 500)]).syncNow()
+
+  assert.equal(result, null)
   assert.deepEqual(
     repository.listCoinListings().map((listing) => listing.symbol),
-    ['1000BONK']
+    ['BTC']
   )
+})
+
+test('a failed request keeps the previous data and reports no success', async (t) => {
+  const repository = new CardRepository(':memory:')
+  seedCards(repository, ['BTC'])
+  t.after(() => repository.close())
+
+  await service(repository, [perpetual('Deribit', 'BTC', 500)]).syncNow()
+
+  const result = await service(repository, () =>
+    Promise.reject(new Error('rate limited'))
+  ).syncNow()
+
+  assert.equal(result, null)
+  assert.equal(repository.listCoinListings().length, 1)
 })

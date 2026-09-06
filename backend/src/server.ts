@@ -73,16 +73,6 @@ const exchangeListingSyncService = new ExchangeListingSyncService({
   ),
   logger: app.log
 })
-const mexcContractSyncService = new MexcContractSyncService({
-  repository,
-  mexcClient,
-  logger: app.log,
-  onSyncCompleted: async () => {
-    await mexcSyncService.syncNow()
-    // The catalog has just changed, so the venue list for the new cards is stale by definition.
-    await exchangeListingSyncService.syncNow()
-  }
-})
 const coingeckoConfig = readCoingeckoConfig()
 const coingeckoListingSyncService = coingeckoConfig.enabled
   ? new CoingeckoListingSyncService({
@@ -91,10 +81,22 @@ const coingeckoListingSyncService = coingeckoConfig.enabled
         apiKey: coingeckoConfig.apiKey,
         apiKeyKind: coingeckoConfig.apiKeyKind
       }),
-      dailyCoinBudget: coingeckoConfig.dailyCoinBudget,
+      maxVenuesPerCoin: coingeckoConfig.maxVenuesPerCoin,
       logger: app.log
     })
   : null
+const mexcContractSyncService = new MexcContractSyncService({
+  repository,
+  mexcClient,
+  logger: app.log,
+  onSyncCompleted: async () => {
+    await mexcSyncService.syncNow()
+    // The catalog has just changed, so the venue list for the new cards is stale by definition.
+    // CoinGecko runs after the direct sync so it can see which venues are already covered.
+    await exchangeListingSyncService.syncNow()
+    await coingeckoListingSyncService?.syncNow()
+  }
+})
 const port = Number(process.env.PORT ?? 3001)
 const host = process.env.HOST ?? '0.0.0.0'
 

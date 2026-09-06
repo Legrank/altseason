@@ -208,22 +208,22 @@ test('a venue read directly outranks the same venue reported by the aggregator',
     '2026-09-05T10:00:00.000Z'
   )
   repository.replaceCoingeckoListings(
-    'BTC',
-    'bitcoin',
     [
       {
+        symbol: 'BTC',
         exchange: 'gate',
         label: 'Gate.io',
-        marketType: 'spot',
-        pair: 'BTC/USDT',
+        marketType: 'futures',
+        pair: 'BTC_USDT',
         tradeUrl: null,
         volumeUsd24h: 10
       },
       {
-        exchange: 'kraken',
-        label: 'Kraken',
-        marketType: 'spot',
-        pair: 'BTC/USD',
+        symbol: 'BTC',
+        exchange: 'hyperliquid',
+        label: 'Hyperliquid',
+        marketType: 'futures',
+        pair: 'BTCUSDT',
         tradeUrl: null,
         volumeUsd24h: 20
       }
@@ -242,9 +242,9 @@ test('a venue read directly outranks the same venue reported by the aggregator',
       tradeUrl: 'https://gate/futures'
     },
     {
-      exchange: 'kraken',
-      label: 'Kraken',
-      marketTypes: ['spot'],
+      exchange: 'hyperliquid',
+      label: 'Hyperliquid',
+      marketTypes: ['futures'],
       source: 'coingecko',
       tradeUrl: null
     }
