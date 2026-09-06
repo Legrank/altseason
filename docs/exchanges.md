@@ -18,16 +18,22 @@ This is an architectural rule for the project, same as the MEXC boundary in [mex
 
 ## Two sources, deliberately
 
-| | Direct exchange APIs | CoinGecko |
+| | Direct exchange APIs | CoinGecko `/derivatives` |
 |---|---|---|
-| Cost | One request per market per venue — the whole catalog for well under a dozen calls | One credit per call, 10k/month on the free Demo plan |
-| Coverage | Only the venues with a client | Every venue CoinGecko tracks |
-| Freshness | Daily, complete | Rotating, several days per full pass |
-| Certainty | Authoritative | Depends on resolving a ticker to the right coin |
+| Markets | Spot and USDT perpetuals | **Perpetuals only** |
+| Cost | One request per market per venue — the whole catalog for well under a dozen calls | One call a day, whole universe |
+| Coverage | Only the venues with a client | 105 derivatives venues |
+| Certainty | Authoritative | CoinGecko resolves the underlying itself, in `index_id` |
 
 A venue read directly always outranks the same venue reported by CoinGecko; the aggregator only
 ever contributes exchanges no direct client covers. `coin_listings.source` records which won, and
 aggregator-only badges render dashed in the UI.
+
+CoinGecko contributes **no spot data**. Its `/coins/{id}/tickers` endpoint returns spot markets and
+nothing else — verified on a live 100-ticker ETH response: every quote is a spot currency and no
+entry is a perpetual — but spot is already covered authoritatively by the six direct clients, so
+paying per coin for a second opinion buys nothing. Derivatives are the gap, and `/derivatives`
+fills it for one credit.
 
 ## Endpoints used
 
@@ -42,8 +48,9 @@ Every endpoint below is public and keyless. Spot and USDT-margined perpetuals ar
 | KuCoin | `GET api.kucoin.com/api/v2/symbols` | `GET api-futures.kucoin.com/api/v1/contracts/active` |
 | Bitget | `GET api.bitget.com/api/v2/spot/public/symbols` | `GET api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES` |
 
-CoinGecko: `GET /coins/list`, `GET /coins/markets` (4 pages, for market-cap ranking), and
-`GET /coins/{id}/tickers` (max 2 pages per coin).
+CoinGecko: `GET /derivatives` — every perpetual on every tracked venue in one response
+(~25k contracts, ~8.8 MB). Dated futures are filtered out; only perpetuals compare to a MEXC
+perpetual card.
 
 ### Geo-blocking
 
@@ -92,23 +99,31 @@ may name a different asset on another venue. Accepted for now; contract-address 
 - Success is recorded in `app_metadata` only if at least one venue synced, so restarts do not reset
   the interval and a total failure retries in an hour.
 
-`CoingeckoListingSyncService` — every 24 hours, disabled with `COINGECKO_ENABLED=false`.
+`CoingeckoListingSyncService` — every 24 hours, and after the direct sync when the card catalog
+changes. Disabled with `COINGECKO_ENABLED=false`.
 
-- Spends `COINGECKO_DAILY_COIN_BUDGET` (default 100) coins per run on the cards whose aggregator data
-  is oldest, so the catalog rotates through over several days instead of being fetched at once.
-  One card costs one to two calls; the index costs five per run.
-- A ticker that maps to exactly one CoinGecko coin resolves directly. An ambiguous ticker is settled
-  by market-cap rank. A ticker that is both ambiguous and outside the top ranking is **left
-  unresolved rather than guessed**, so a card never shows another coin's venues.
-- A rate limit stops the run and leaves the rest of the budget for the next one.
-- An empty result is valid here and is stored: it is the correct answer for a coin that trades nowhere
-  CoinGecko tracks.
+- One `/derivatives` call covers every card, so there is no per-coin budget and no rotation.
+- The underlying ticker comes from `index_id`, so the coin-id ambiguity a per-coin lookup would face
+  does not arise.
+- A coin trades on far more venues than a card can usefully show — the median tracked coin has
+  perpetuals on 22 of them — so only the top `COINGECKO_MAX_VENUES_PER_COIN` (default 5) by open
+  interest are kept. A venue running several perpetuals on one asset is ranked by its deepest;
+  contracts with no reported open interest rank below every contract that has one.
+- The cap is applied **after** dropping MEXC itself (every card already lives there) and any venue a
+  direct client already reports, so the slots go to genuinely new venues. This is why the sync runs
+  after the direct one.
+- An empty response, or one that matches no tracked coin, is treated as a failure and the previous
+  data is kept. Every tracked coin has a perpetual somewhere, so a total miss means the payload
+  changed shape rather than that the venues disappeared.
+- `/derivatives` carries no trade URL, so aggregator badges are not links.
 
 ## Storage
 
-`coin_listings` holds one row per `(symbol, exchange, market_type, source)`; `coin_listing_coingecko_state`
-holds the rotation cursor and resolved coin id per symbol. Both are pruned when the MEXC contract sync
-removes a card. `CardService` collapses the rows into one `CardExchange` per venue, preferring the
+`coin_listings` holds one row per `(symbol, exchange, market_type, source)`, pruned when the MEXC
+contract sync removes a card. Venue names are normalized so `Binance (Futures)` merges into the same
+badge as the directly-read `binance` instead of rendering as a near-duplicate venue; only exact
+market-type suffixes are stripped, because a trailing parenthetical is not always a market type
+(`KiloEx (BSC)`, `GMX Perpetuals V2 (Arbitrum)` name a chain). `CardService` collapses the rows into one `CardExchange` per venue, preferring the
 direct source and linking to the spot market where one exists.
 
 ## Environment variables
@@ -116,5 +131,5 @@ direct source and linking to the spot market where one exists.
 - `EXCHANGE_LISTING_DISABLED_EXCHANGES` — comma-separated exchange ids to skip (e.g. geo-blocked venues).
 - `COINGECKO_ENABLED` — `false` disables the aggregator sync entirely.
 - `COINGECKO_API_KEY` / `COINGECKO_API_KEY_KIND` (`demo` | `pro`) — a Demo key raises the limit to
-  100 calls/min and 10k/month. Keyless access is far stricter and will rate-limit a full run.
-- `COINGECKO_DAILY_COIN_BUDGET` — cards enriched per run, 1..1000, default 100.
+  100 calls/min and 10k/month. Keyless access is far stricter, though one call a day fits it.
+- `COINGECKO_MAX_VENUES_PER_COIN` — derivatives venues kept per card, 1..50, default 5.

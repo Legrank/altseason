@@ -11,7 +11,7 @@ loadOptionalEnvFiles([resolve(currentDir, '../../.env.local'), resolve(currentDi
 
 const databasePath = process.argv[2] ?? resolve(currentDir, '../../data/cards.sqlite')
 const coingeckoConfig = readCoingeckoConfig()
-const budget = Number(process.argv[3] ?? 3)
+const maxVenuesPerCoin = Number(process.argv[3] ?? coingeckoConfig.maxVenuesPerCoin)
 const repository = new CardRepository(databasePath)
 const service = new CoingeckoListingSyncService({
   repository,
@@ -19,48 +19,59 @@ const service = new CoingeckoListingSyncService({
     apiKey: coingeckoConfig.apiKey,
     apiKeyKind: coingeckoConfig.apiKeyKind
   }),
-  dailyCoinBudget: budget,
+  maxVenuesPerCoin,
   logger: {
     info(context, message) {
       console.log(message, context)
     },
     warn(context, message) {
-      const error = context.err
-      console.warn(message, {
-        ...context,
-        err: error instanceof Error ? `${error.name}: ${error.message}` : error
-      })
+      console.warn(message, describe(context))
     },
     error(context, message) {
-      const error = context.err
-      console.error(message, {
-        ...context,
-        err: error instanceof Error ? `${error.name}: ${error.message}` : error
-      })
+      console.error(message, describe(context))
     }
   }
 })
 
-const queued = repository.getStaleCoingeckoSymbols(budget)
-console.log('queued symbols:', queued)
+function describe(context: Record<string, unknown>): Record<string, unknown> {
+  const error = context.err
+
+  return error instanceof Error
+    ? { ...context, err: `${error.name}: ${error.message}` }
+    : context
+}
 
 const result = await service.syncNow()
+
 console.log('\nresult:', result)
 
-for (const symbol of queued) {
-  const listings = repository
-    .listCoinListingsForSymbol(symbol)
+if (result !== null) {
+  const aggregated = repository
+    .listCoinListings()
     .filter((listing) => listing.source === 'coingecko')
+  const byExchange = new Map<string, number>()
 
-  console.log(
-    `  ${symbol}: ${listings.length} aggregator venues` +
-      (listings.length > 0
-        ? ` -> ${listings
-            .slice(0, 8)
-            .map((listing) => listing.exchange)
-            .join(', ')}`
-        : '')
-  )
+  for (const listing of aggregated) {
+    byExchange.set(listing.exchange, (byExchange.get(listing.exchange) ?? 0) + 1)
+  }
+
+  console.log(`\naggregator rows: ${aggregated.length}, distinct venues: ${byExchange.size}`)
+  console.log('top venues by card count:')
+
+  for (const [exchange, count] of [...byExchange.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 12)) {
+    console.log(`  ${exchange}: ${count}`)
+  }
+
+  for (const symbol of ['BTC', '1000BONK', 'ARKK', 'PURR']) {
+    const venues = repository
+      .listCoinListingsForSymbol(symbol)
+      .filter((listing) => listing.source === 'coingecko')
+      .map((listing) => listing.label)
+
+    console.log(`  ${symbol}: ${venues.join(', ') || '(none)'}`)
+  }
 }
 
 repository.close()

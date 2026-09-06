@@ -1,8 +1,6 @@
 const DEFAULT_PUBLIC_BASE_URL = 'https://api.coingecko.com/api/v3'
 const DEFAULT_PRO_BASE_URL = 'https://pro-api.coingecko.com/api/v3'
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60 * 1000
-const TICKERS_PAGE_SIZE = 100
-const DEFAULT_MAX_TICKER_PAGES = 3
 
 export type CoingeckoClientErrorCode = 'cooldown' | 'rate_limit' | 'http' | 'network' | 'parse'
 
@@ -24,21 +22,15 @@ export class CoingeckoClientError extends Error {
   }
 }
 
-export interface CoingeckoCoin {
-  id: string
+export interface CoingeckoPerpetual {
+  /** Venue name as CoinGecko reports it, e.g. "Binance (Futures)". */
+  market: string
+  /** Venue-native contract symbol, e.g. "BTCUSDT". */
   symbol: string
-  name: string
-}
-
-export interface CoingeckoTicker {
-  exchangeId: string
-  exchangeName: string
-  base: string
-  target: string
-  tradeUrl: string | null
-  volumeUsd: number | null
-  trustScore: string | null
-  isStale: boolean
+  /** Underlying asset ticker, e.g. "BTC". CoinGecko resolves this itself. */
+  indexId: string
+  openInterest: number | null
+  volume24h: number | null
 }
 
 export interface CoingeckoClientOptions {
@@ -48,12 +40,11 @@ export interface CoingeckoClientOptions {
   baseUrl?: string
   fetchImpl?: typeof fetch
   now?: () => number
-  maxTickerPages?: number
 }
 
 /**
- * Read-only wrapper over the CoinGecko public API. Only the two endpoints the listing
- * sync needs are exposed; nothing else in the codebase may call coingecko.com directly.
+ * Read-only wrapper over the CoinGecko public API. Only the endpoint the listing sync
+ * needs is exposed; nothing else in the codebase may call coingecko.com directly.
  */
 export class CoingeckoClient {
   private readonly apiKey: string | null
@@ -61,7 +52,6 @@ export class CoingeckoClient {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
   private readonly now: () => number
-  private readonly maxTickerPages: number
   private cooldownUntil = 0
 
   constructor(options: CoingeckoClientOptions = {}) {
@@ -69,147 +59,61 @@ export class CoingeckoClient {
     this.apiKeyKind = options.apiKeyKind ?? 'demo'
     this.baseUrl =
       options.baseUrl ??
-      (this.apiKey !== null && this.apiKeyKind === 'pro' ? DEFAULT_PRO_BASE_URL : DEFAULT_PUBLIC_BASE_URL)
+      (this.apiKey !== null && this.apiKeyKind === 'pro'
+        ? DEFAULT_PRO_BASE_URL
+        : DEFAULT_PUBLIC_BASE_URL)
     this.fetchImpl = options.fetchImpl ?? fetch
     this.now = options.now ?? Date.now
-    this.maxTickerPages = options.maxTickerPages ?? DEFAULT_MAX_TICKER_PAGES
   }
 
-  async getCoinsList(): Promise<CoingeckoCoin[]> {
-    const payload = await this.requestJson('/coins/list', 'Failed to parse the CoinGecko coin list response.')
+  /**
+   * Every perpetual contract CoinGecko tracks, across every derivatives venue, in one call.
+   * Dated futures are filtered out; only perpetuals are comparable to a MEXC perpetual card.
+   */
+  async getPerpetualDerivatives(): Promise<CoingeckoPerpetual[]> {
+    const payload = await this.requestJson(
+      '/derivatives',
+      'Failed to parse the CoinGecko derivatives response.'
+    )
 
     if (!Array.isArray(payload)) {
-      throw new CoingeckoClientError('parse', 'Unexpected CoinGecko coin list payload shape.')
+      throw new CoingeckoClientError('parse', 'Unexpected CoinGecko derivatives payload shape.')
     }
 
     return payload.flatMap((item) => {
-      const id = readString(item, 'id')
-      const symbol = readString(item, 'symbol').toUpperCase()
-
-      if (!id || !symbol) {
+      if (readString(item, 'contract_type') !== 'perpetual') {
         return []
       }
 
-      return [{ id, symbol, name: readString(item, 'name') }]
+      const market = readString(item, 'market')
+      const indexId = readString(item, 'index_id').toUpperCase()
+      const symbol = readString(item, 'symbol')
+
+      if (!market || !indexId) {
+        return []
+      }
+
+      return [
+        {
+          market,
+          symbol,
+          indexId,
+          openInterest: parseFiniteNumber(readProperty(item, 'open_interest')),
+          volume24h: parseFiniteNumber(readProperty(item, 'volume_24h'))
+        }
+      ]
     })
-  }
-
-  /**
-   * The highest-market-cap coins, in rank order. A ticker symbol is not unique on CoinGecko,
-   * so this ranking is what lets the listing sync pick the coin a card actually means.
-   */
-  async getTopCoinsByMarketCap(pages = 4): Promise<CoingeckoCoin[]> {
-    const coins: CoingeckoCoin[] = []
-
-    for (let page = 1; page <= pages; page += 1) {
-      const payload = await this.requestJson(
-        `/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`,
-        'Failed to parse the CoinGecko markets response.'
-      )
-
-      if (!Array.isArray(payload)) {
-        throw new CoingeckoClientError('parse', 'Unexpected CoinGecko markets payload shape.')
-      }
-
-      for (const item of payload) {
-        const id = readString(item, 'id')
-        const symbol = readString(item, 'symbol').toUpperCase()
-
-        if (id && symbol) {
-          coins.push({ id, symbol, name: readString(item, 'name') })
-        }
-      }
-
-      if (payload.length < 250) {
-        break
-      }
-    }
-
-    return coins
-  }
-
-  /**
-   * Walks the paginated ticker list for one coin. CoinGecko caps a page at 100 tickers and
-   * exposes no total count on the JSON body, so a short page ends the walk.
-   */
-  async getCoinTickers(coinId: string): Promise<CoingeckoTicker[]> {
-    const tickers: CoingeckoTicker[] = []
-
-    for (let page = 1; page <= this.maxTickerPages; page += 1) {
-      const payload = await this.requestJson(
-        `/coins/${encodeURIComponent(coinId)}/tickers?page=${page}&depth=false`,
-        'Failed to parse the CoinGecko coin tickers response.'
-      )
-
-      if (typeof payload !== 'object' || payload === null) {
-        throw new CoingeckoClientError('parse', 'Unexpected CoinGecko coin tickers payload shape.')
-      }
-
-      const rawTickers = Reflect.get(payload, 'tickers')
-
-      if (!Array.isArray(rawTickers)) {
-        throw new CoingeckoClientError('parse', 'Unexpected CoinGecko coin tickers payload shape.')
-      }
-
-      for (const item of rawTickers) {
-        const ticker = this.parseTicker(item)
-
-        if (ticker !== null) {
-          tickers.push(ticker)
-        }
-      }
-
-      if (rawTickers.length < TICKERS_PAGE_SIZE) {
-        break
-      }
-    }
-
-    return tickers
-  }
-
-  private parseTicker(item: unknown): CoingeckoTicker | null {
-    if (typeof item !== 'object' || item === null) {
-      return null
-    }
-
-    const market = Reflect.get(item, 'market')
-    const exchangeId = readString(market, 'identifier')
-    const exchangeName = readString(market, 'name')
-    const base = readString(item, 'base').toUpperCase()
-    const target = readString(item, 'target').toUpperCase()
-
-    if (!exchangeId || !base || !target) {
-      return null
-    }
-
-    const convertedVolume = Reflect.get(item, 'converted_volume')
-    const volumeUsd = parseFiniteNumber(
-      typeof convertedVolume === 'object' && convertedVolume !== null
-        ? Reflect.get(convertedVolume, 'usd')
-        : undefined
-    )
-    const trustScore = Reflect.get(item, 'trust_score')
-    const tradeUrl = readString(item, 'trade_url')
-
-    return {
-      exchangeId,
-      exchangeName: exchangeName || exchangeId,
-      base,
-      target,
-      tradeUrl: tradeUrl || null,
-      volumeUsd,
-      trustScore: typeof trustScore === 'string' ? trustScore : null,
-      isStale: Reflect.get(item, 'is_stale') === true
-    }
   }
 
   private async requestJson(path: string, parseErrorMessage: string): Promise<unknown> {
     const now = this.now()
 
     if (now < this.cooldownUntil) {
-      throw new CoingeckoClientError('cooldown', 'CoinGecko client is waiting for Retry-After cooldown.', {
-        retryAfterMs: this.cooldownUntil - now
-      })
+      throw new CoingeckoClientError(
+        'cooldown',
+        'CoinGecko client is waiting for Retry-After cooldown.',
+        { retryAfterMs: this.cooldownUntil - now }
+      )
     }
 
     const headers = new Headers({ accept: 'application/json' })
@@ -256,12 +160,16 @@ export class CoingeckoClient {
   }
 }
 
-function readString(payload: unknown, key: string): string {
+function readProperty(payload: unknown, key: string): unknown {
   if (typeof payload !== 'object' || payload === null) {
-    return ''
+    return undefined
   }
 
-  const value = Reflect.get(payload, key)
+  return Reflect.get(payload, key)
+}
+
+function readString(payload: unknown, key: string): string {
+  const value = readProperty(payload, key)
 
   return typeof value === 'string' ? value.trim() : ''
 }

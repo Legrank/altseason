@@ -135,6 +135,7 @@ export interface CoinListingInput {
 }
 
 export interface CoingeckoListingInput {
+  symbol: string
   exchange: string
   label: string
   marketType: ExchangeMarketType

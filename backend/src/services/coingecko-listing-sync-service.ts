@@ -1,8 +1,7 @@
-import { CoingeckoClientError } from '../integrations/coingecko/index.js'
-import type { CoingeckoCoin, CoingeckoTicker } from '../integrations/coingecko/index.js'
+import type { CoingeckoPerpetual } from '../integrations/coingecko/index.js'
 import type { CardRepository } from '../repository.js'
 import type { CoingeckoListingInput } from '../types.js'
-import { buildSymbolCandidates } from './symbol-aliases.js'
+import { buildSymbolCandidates, normalizeSymbol } from './symbol-aliases.js'
 
 interface Logger {
   info(context: Record<string, unknown>, message: string): void
@@ -18,54 +17,89 @@ const noopLogger: Logger = {
 
 export const COINGECKO_LISTING_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000
 const DEFAULT_RETRY_INTERVAL_MS = 60 * 60 * 1000
-const DEFAULT_DAILY_COIN_BUDGET = 100
-const COIN_INDEX_TTL_MS = 24 * 60 * 60 * 1000
+const DEFAULT_MAX_VENUES_PER_COIN = 5
 
-interface CoingeckoListingProvider {
-  getCoinsList(): Promise<CoingeckoCoin[]>
-  getTopCoinsByMarketCap(pages?: number): Promise<CoingeckoCoin[]>
-  getCoinTickers(coinId: string): Promise<CoingeckoTicker[]>
+/** The venue every card already lives on; listing it under "also listed on" says nothing. */
+const OWN_EXCHANGE_ID = 'mexc'
+
+/**
+ * CoinGecko appends the market type to a venue name. Stripping it is what lets
+ * "Binance (Futures)" merge into the same badge as the directly-read "binance",
+ * instead of rendering as a second, near-duplicate venue.
+ *
+ * Only these exact market-type suffixes are stripped: a trailing parenthetical is not
+ * always a market type ("KiloEx (BSC)", "GMX Perpetuals V2 (Arbitrum)" name a chain),
+ * and the leading space keeps a venue such as "SynFutures" intact.
+ */
+const MARKET_TYPE_SUFFIXES = [
+  ' (Futures)',
+  ' (Derivatives)',
+  ' (Derivative)',
+  ' (Perpetual)',
+  ' (Perpetuals)',
+  ' Futures',
+  ' Derivatives'
+] as const
+
+export interface ExchangeIdentity {
+  id: string
+  label: string
+}
+
+export function toExchangeIdentity(market: string): ExchangeIdentity | null {
+  let label = market.trim()
+
+  for (const suffix of MARKET_TYPE_SUFFIXES) {
+    if (label.endsWith(suffix)) {
+      label = label.slice(0, -suffix.length).trim()
+      break
+    }
+  }
+
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/gu, '')
+
+  return id ? { id, label } : null
 }
 
 export interface CoingeckoListingSyncResult {
-  processedSymbols: number
-  resolvedSymbols: number
+  matchedSymbols: number
   listingCount: number
+}
+
+interface PerpetualDerivativesProvider {
+  getPerpetualDerivatives(): Promise<CoingeckoPerpetual[]>
 }
 
 interface CoingeckoListingSyncServiceOptions {
   repository: CardRepository
-  coingeckoClient: CoingeckoListingProvider
-  /** Cards enriched per run. One card costs one to two CoinGecko calls. */
-  dailyCoinBudget?: number
+  coingeckoClient: PerpetualDerivativesProvider
+  /** Venues kept per coin, ranked by open interest. */
+  maxVenuesPerCoin?: number
   intervalMs?: number
   retryIntervalMs?: number
   now?: () => Date
   logger?: Logger
 }
 
-interface CoinIndex {
-  builtAtMs: number
-  /** Ticker symbol -> coin id, resolved by market-cap rank where a symbol is ambiguous. */
-  bySymbol: Map<string, string>
-}
-
 /**
- * Enriches cards with venues the direct exchange clients do not cover, using CoinGecko.
+ * Adds the derivatives venues the direct exchange clients do not cover.
  *
- * CoinGecko charges one credit per call and the free Demo plan allows 10k calls a month,
- * so the whole catalog is never fetched at once: each run spends a fixed budget on the
- * cards whose aggregator data is oldest, and the catalog rotates through over several days.
+ * `GET /derivatives` returns every perpetual on every venue CoinGecko tracks in a single
+ * call, and carries the underlying ticker in `index_id`, so this costs one credit a day
+ * and needs none of the coin-id resolution a per-coin lookup would.
+ *
+ * A coin trades on far more venues than a card can usefully show, so only the top
+ * `maxVenuesPerCoin` by open interest are kept — counted after dropping MEXC itself and
+ * any venue a direct client already reports, so the slots go to genuinely new venues.
  */
 export class CoingeckoListingSyncService {
   private readonly repository: CardRepository
-  private readonly coingeckoClient: CoingeckoListingProvider
-  private readonly dailyCoinBudget: number
+  private readonly coingeckoClient: PerpetualDerivativesProvider
+  private readonly maxVenuesPerCoin: number
   private readonly intervalMs: number
   private readonly retryIntervalMs: number
   private readonly now: () => Date
   private readonly logger: Logger
-  private coinIndex: CoinIndex | null = null
   private timer: NodeJS.Timeout | null = null
   private started = false
   private inProgress = false
@@ -73,7 +107,7 @@ export class CoingeckoListingSyncService {
   constructor(options: CoingeckoListingSyncServiceOptions) {
     this.repository = options.repository
     this.coingeckoClient = options.coingeckoClient
-    this.dailyCoinBudget = options.dailyCoinBudget ?? DEFAULT_DAILY_COIN_BUDGET
+    this.maxVenuesPerCoin = options.maxVenuesPerCoin ?? DEFAULT_MAX_VENUES_PER_COIN
     this.intervalMs = options.intervalMs ?? COINGECKO_LISTING_SYNC_INTERVAL_MS
     this.retryIntervalMs = options.retryIntervalMs ?? DEFAULT_RETRY_INTERVAL_MS
     this.now = options.now ?? (() => new Date())
@@ -86,7 +120,7 @@ export class CoingeckoListingSyncService {
     }
 
     this.started = true
-    this.schedule(0)
+    this.schedule(this.getInitialDelayMs())
   }
 
   stop(): void {
@@ -106,58 +140,51 @@ export class CoingeckoListingSyncService {
     this.inProgress = true
 
     try {
-      const symbols = this.repository.getStaleCoingeckoSymbols(this.dailyCoinBudget)
+      const trackedSymbols = this.repository.getTrackedSymbols()
 
-      if (symbols.length === 0) {
-        return { processedSymbols: 0, resolvedSymbols: 0, listingCount: 0 }
+      if (trackedSymbols.length === 0) {
+        this.logger.warn({}, 'CoinGecko listing synchronization skipped: no tracked symbols.')
+        return null
       }
 
-      const index = await this.getCoinIndex()
-      let processedSymbols = 0
-      let resolvedSymbols = 0
-      let listingCount = 0
+      const perpetuals = await this.coingeckoClient.getPerpetualDerivatives()
 
-      for (const symbol of symbols) {
-        const syncedAt = this.now().toISOString()
-        const coinId = this.resolveCoinId(symbol, index)
-
-        if (coinId === null) {
-          // Record the attempt anyway so an unresolvable symbol does not block the rotation.
-          this.repository.replaceCoingeckoListings(symbol, null, [], syncedAt)
-          processedSymbols += 1
-          continue
-        }
-
-        try {
-          const tickers = await this.coingeckoClient.getCoinTickers(coinId)
-          listingCount += this.repository.replaceCoingeckoListings(
-            symbol,
-            coinId,
-            this.toListings(tickers),
-            syncedAt
-          )
-          processedSymbols += 1
-          resolvedSymbols += 1
-        } catch (error) {
-          if (error instanceof CoingeckoClientError && (error.code === 'rate_limit' || error.code === 'cooldown')) {
-            // Stop the run instead of burning the remaining budget against a closed door.
-            this.logger.warn(
-              { err: error, symbol, processedSymbols },
-              'CoinGecko listing synchronization stopped early on a rate limit.'
-            )
-            break
-          }
-
-          this.logger.warn({ err: error, symbol }, 'CoinGecko listing synchronization failed for one symbol.')
-        }
+      // An empty response must never be allowed to wipe the stored venues.
+      if (perpetuals.length === 0) {
+        this.logger.error({}, 'CoinGecko returned no perpetual contracts; previous data kept.')
+        return null
       }
 
+      const coveredExchangeIds = new Set(this.repository.getDirectlySourcedExchangeIds())
+      const listings = this.selectListings(trackedSymbols, perpetuals, coveredExchangeIds)
+
+      // Every tracked coin has at least one perpetual somewhere, so a total miss means the
+      // payload changed shape rather than that the venues disappeared.
+      if (listings.length === 0) {
+        this.logger.error(
+          { perpetualCount: perpetuals.length },
+          'CoinGecko perpetuals matched no tracked coin; previous data kept.'
+        )
+        return null
+      }
+
+      const updatedAt = this.now().toISOString()
+      const listingCount = this.repository.replaceCoingeckoListings(listings, updatedAt)
+      const matchedSymbols = new Set(listings.map((listing) => listing.symbol)).size
+
+      this.repository.setCoingeckoListingSyncCompletedAt(updatedAt)
       this.logger.info(
-        { processedSymbols, resolvedSymbols, listingCount, budget: this.dailyCoinBudget },
+        {
+          matchedSymbols,
+          listingCount,
+          perpetualCount: perpetuals.length,
+          maxVenuesPerCoin: this.maxVenuesPerCoin,
+          completedAt: updatedAt
+        },
         'CoinGecko listing synchronization completed.'
       )
 
-      return { processedSymbols, resolvedSymbols, listingCount }
+      return { matchedSymbols, listingCount }
     } catch (error) {
       this.logger.error({ err: error }, 'CoinGecko listing synchronization failed.')
       return null
@@ -166,91 +193,84 @@ export class CoingeckoListingSyncService {
     }
   }
 
-  private toListings(tickers: readonly CoingeckoTicker[]): CoingeckoListingInput[] {
-    const byExchange = new Map<string, CoingeckoListingInput>()
+  private selectListings(
+    trackedSymbols: readonly string[],
+    perpetuals: readonly CoingeckoPerpetual[],
+    coveredExchangeIds: ReadonlySet<string>
+  ): CoingeckoListingInput[] {
+    const byIndexId = new Map<string, CoingeckoPerpetual[]>()
 
-    for (const ticker of tickers) {
-      if (ticker.isStale) {
-        continue
+    for (const perpetual of perpetuals) {
+      const existing = byIndexId.get(perpetual.indexId)
+
+      if (existing === undefined) {
+        byIndexId.set(perpetual.indexId, [perpetual])
+      } else {
+        existing.push(perpetual)
       }
-
-      const existing = byExchange.get(ticker.exchangeId)
-
-      // One venue can list a coin against many quotes; keep its deepest market.
-      if (existing !== undefined && (existing.volumeUsd24h ?? 0) >= (ticker.volumeUsd ?? 0)) {
-        continue
-      }
-
-      byExchange.set(ticker.exchangeId, {
-        exchange: ticker.exchangeId,
-        label: ticker.exchangeName,
-        // The coin tickers endpoint reports spot markets; CoinGecko keeps derivatives elsewhere.
-        marketType: 'spot',
-        pair: `${ticker.base}/${ticker.target}`,
-        tradeUrl: ticker.tradeUrl,
-        volumeUsd24h: ticker.volumeUsd
-      })
     }
 
-    return [...byExchange.values()]
+    const listings: CoingeckoListingInput[] = []
+
+    for (const symbol of trackedSymbols) {
+      const bestByExchange = new Map<
+        string,
+        { identity: ExchangeIdentity; perpetual: CoingeckoPerpetual }
+      >()
+
+      for (const candidate of buildSymbolCandidates(symbol)) {
+        for (const perpetual of byIndexId.get(candidate) ?? []) {
+          const identity = toExchangeIdentity(perpetual.market)
+
+          if (identity === null || identity.id === OWN_EXCHANGE_ID) {
+            continue
+          }
+
+          if (coveredExchangeIds.has(identity.id)) {
+            continue
+          }
+
+          const existing = bestByExchange.get(identity.id)
+
+          // A venue can run several perpetuals on one asset; rank it by its deepest.
+          if (existing !== undefined && openInterestOf(existing.perpetual) >= openInterestOf(perpetual)) {
+            continue
+          }
+
+          bestByExchange.set(identity.id, { identity, perpetual })
+        }
+      }
+
+      const ranked = [...bestByExchange.values()]
+        .sort((left, right) => openInterestOf(right.perpetual) - openInterestOf(left.perpetual))
+        .slice(0, this.maxVenuesPerCoin)
+
+      for (const { identity, perpetual } of ranked) {
+        listings.push({
+          symbol: normalizeSymbol(symbol),
+          exchange: identity.id,
+          label: identity.label,
+          marketType: 'futures',
+          pair: perpetual.symbol || perpetual.indexId,
+          // /derivatives carries no trade URL, unlike the direct exchange catalogs.
+          tradeUrl: null,
+          volumeUsd24h: perpetual.volume24h
+        })
+      }
+    }
+
+    return listings
   }
 
-  private resolveCoinId(symbol: string, index: CoinIndex): string | null {
-    for (const candidate of buildSymbolCandidates(symbol)) {
-      const coinId = index.bySymbol.get(candidate)
+  private getInitialDelayMs(): number {
+    const completedAt = this.repository.getCoingeckoListingSyncCompletedAt()
+    const completedAtMs = completedAt === null ? Number.NaN : Date.parse(completedAt)
 
-      if (coinId !== undefined) {
-        return coinId
-      }
+    if (!Number.isFinite(completedAtMs)) {
+      return 0
     }
 
-    return null
-  }
-
-  private async getCoinIndex(): Promise<CoinIndex> {
-    const nowMs = this.now().getTime()
-
-    if (this.coinIndex !== null && nowMs - this.coinIndex.builtAtMs < COIN_INDEX_TTL_MS) {
-      return this.coinIndex
-    }
-
-    const [topCoins, allCoins] = await Promise.all([
-      this.coingeckoClient.getTopCoinsByMarketCap(),
-      this.coingeckoClient.getCoinsList()
-    ])
-    const symbolCounts = new Map<string, number>()
-
-    for (const coin of allCoins) {
-      symbolCounts.set(coin.symbol, (symbolCounts.get(coin.symbol) ?? 0) + 1)
-    }
-
-    // Unambiguous tickers resolve directly; ambiguous ones are settled by market-cap rank,
-    // and a ticker that is both ambiguous and outside the ranking is left unresolved rather
-    // than guessed, so a card never shows another coin's venues.
-    const bySymbol = new Map<string, string>()
-
-    for (const coin of allCoins) {
-      if (symbolCounts.get(coin.symbol) === 1) {
-        bySymbol.set(coin.symbol, coin.id)
-      }
-    }
-
-    // getTopCoinsByMarketCap returns rank order, so the first entry for a symbol is the
-    // highest-capitalised coin carrying it and must not be overwritten by a lower-ranked one.
-    const rankedSymbols = new Set<string>()
-
-    for (const coin of topCoins) {
-      if (rankedSymbols.has(coin.symbol)) {
-        continue
-      }
-
-      rankedSymbols.add(coin.symbol)
-      bySymbol.set(coin.symbol, coin.id)
-    }
-
-    this.coinIndex = { builtAtMs: nowMs, bySymbol }
-
-    return this.coinIndex
+    return Math.max(0, completedAtMs + this.intervalMs - this.now().getTime())
   }
 
   private schedule(delayMs: number): void {
@@ -273,4 +293,9 @@ export class CoingeckoListingSyncService {
 
     this.schedule(result === null ? this.retryIntervalMs : this.intervalMs)
   }
+}
+
+/** Contracts without a reported open interest rank below every contract that has one. */
+function openInterestOf(perpetual: CoingeckoPerpetual): number {
+  return perpetual.openInterest ?? -1
 }
