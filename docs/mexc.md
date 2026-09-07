@@ -31,6 +31,15 @@ Saved symbol mapping:
 - `ETH` card symbol -> `ETH_USDT` MEXC futures contract
 
 Only exact `*_USDT` perpetual contracts are supported in v1.
+
+The contract catalog is filtered down to crypto instruments inside `MexcClient`:
+
+- a contract whose `tagIdList` contains `2` (stocks / ETFs / indices), `3` (precious metals) or `4` (commodities) is skipped
+- a contract whose base coin is `XAU`, `XAUT`, `XAG` or `XAGT` is skipped, because MEXC leaves the USDT-quoted metal perpetuals untagged
+- a missing or malformed `tagIdList` never removes a contract
+
+Skipped contracts are absent from the weekly catalog sync input, so `syncUsdtContractCards` deletes any
+card that already exists for them together with its price-level events, ratio events and listings.
 The synced value stored in cards is the futures ticker field `lastPrice`.
 The stored average daily volume is computed from the last 90 daily `amount` values after excluding anomalously high outliers with an upper `IQR` filter.
 
@@ -58,7 +67,7 @@ Rules adopted in this project:
 ## Sync behavior
 
 - On the first backend launch, the contract catalog is fetched immediately and missing cards are created.
-- The catalog is reconciled every 7 days; new USDT listings are added and delisted contracts are removed.
+- The catalog is reconciled every 7 days; new USDT listings are added, and delisted or non-crypto contracts are removed.
 - The last successful catalog sync timestamp is persisted in SQLite across backend restarts.
 - An empty or failed catalog response never deletes local cards and is retried after 1 hour.
 - One sync runs immediately when the backend starts.

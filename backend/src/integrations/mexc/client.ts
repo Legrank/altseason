@@ -1,5 +1,10 @@
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000
 const FUTURES_CONTRACT_DETAILS_PATH = '/api/v1/contract/detail/country'
+// MEXC tags non-crypto instruments in the contract catalog: 2 = stocks/ETFs/indices,
+// 3 = precious metals, 4 = commodities. None of them belong in the tracked card catalog.
+const EXCLUDED_CONTRACT_TAG_IDS = new Set([2, 3, 4])
+// Metal perpetuals quoted in USDT carry no metal tag, so they are excluded by base coin.
+const EXCLUDED_BASE_COINS = new Set(['XAU', 'XAUT', 'XAG', 'XAGT'])
 const FUTURES_TICKER_PATH = '/api/v1/contract/ticker'
 const FUTURES_KLINE_PATH_PREFIX = '/api/v1/contract/kline/'
 const DAILY_KLINE_INTERVAL = 'Day1'
@@ -7,6 +12,8 @@ const DAILY_KLINE_INTERVAL = 'Day1'
 interface MexcContractDetailItem {
   symbol?: string
   quoteCoin?: string
+  baseCoin?: string
+  tagIdList?: unknown
 }
 
 interface MexcFuturesTickerItem {
@@ -90,6 +97,10 @@ export class MexcClient {
         continue
       }
 
+      if (this.isExcludedContract(normalizedSymbol, item)) {
+        continue
+      }
+
       if (quoteCoin === 'USDT' || normalizedSymbol.endsWith('_USDT')) {
         symbols.add(normalizedSymbol)
       }
@@ -142,6 +153,25 @@ export class MexcClient {
     }
 
     return amounts.slice(-limit).reverse()
+  }
+
+  private isExcludedContract(normalizedSymbol: string, item: MexcContractDetailItem): boolean {
+    const rawBaseCoin = typeof item.baseCoin === 'string' ? item.baseCoin.trim().toUpperCase() : ''
+    const baseCoin = rawBaseCoin || normalizedSymbol.split('_')[0]
+
+    if (EXCLUDED_BASE_COINS.has(baseCoin)) {
+      return true
+    }
+
+    if (!Array.isArray(item.tagIdList)) {
+      // A missing or malformed tag list must never remove an otherwise valid contract.
+      return false
+    }
+
+    return item.tagIdList.some((tagId) => {
+      const numericTagId = this.parseFiniteNumber(tagId)
+      return numericTagId !== null && EXCLUDED_CONTRACT_TAG_IDS.has(numericTagId)
+    })
   }
 
   private assertCooldown(): void {
