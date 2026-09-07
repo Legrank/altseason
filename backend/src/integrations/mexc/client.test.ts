@@ -26,6 +26,32 @@ test('extracts only USDT futures symbols from contract detail payload', async ()
   assert.deepEqual(symbols, ['BTC_USDT', 'ETH_USDT', 'SOL_USDT'])
 })
 
+test('drops non-crypto contracts tagged as stocks, metals or commodities', async () => {
+  const client = new MexcClient({
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          code: 0,
+          data: [
+            { symbol: 'BTC_USDT', quoteCoin: 'USDT', baseCoin: 'BTC', tagIdList: [5, 8] },
+            { symbol: 'SPX500_USDT', quoteCoin: 'USDT', baseCoin: 'SPX500', tagIdList: [2, 5, 8] },
+            { symbol: 'XAU_USDC', quoteCoin: 'USDT', baseCoin: 'XAU', tagIdList: [3, 8] },
+            { symbol: 'USOIL_USDT', quoteCoin: 'USDT', baseCoin: 'USOIL', tagIdList: ['4', 8] },
+            { symbol: 'XAU_USDT', quoteCoin: 'USDT', baseCoin: 'XAU', tagIdList: [5, 8] },
+            { symbol: 'XAUT_USDT', quoteCoin: 'USDT', tagIdList: [5, 8] },
+            { symbol: 'SOL_USDT', quoteCoin: 'USDT', baseCoin: 'SOL', tagIdList: [8] },
+            { symbol: 'TIA_USDT', quoteCoin: 'USDT', baseCoin: 'TIA' }
+          ]
+        })
+      )
+  })
+
+  const symbols = await client.getUsdtFuturesContractSymbols()
+
+  assert.deepEqual(symbols, ['BTC_USDT', 'SOL_USDT', 'TIA_USDT'])
+})
+
 test('parses MEXC futures ticker snapshot into a contract symbol map', async () => {
   const client = new MexcClient({
     fetchImpl: async () =>
